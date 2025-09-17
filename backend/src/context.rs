@@ -16,6 +16,7 @@ use opencv::{
     core::{Vector, VectorToVec},
     imgcodecs::imencode_def,
 };
+use platforms::Error;
 use strum::IntoEnumIterator;
 use tokio::sync::broadcast::channel;
 
@@ -390,8 +391,14 @@ fn update_loop() {
             .map(OwnedMat::new_from_frame)
             .map(CachedDetector::new);
         let was_capturing_normally = is_capturing_normally;
+        let player_in_cash_shop = matches!(context.player, Player::CashShopThenExit(_, _));
 
-        is_capturing_normally = detector.is_ok();
+        is_capturing_normally = detector.is_ok()
+            || (!player_in_cash_shop
+                && !matches!(
+                    detector,
+                    Err(Error::WindowNotFound | Error::WindowInvalidSize)
+                ));
         context.tick += 1;
         if let Ok(detector) = detector {
             let was_player_alive = !player_state.is_dead();

@@ -29,8 +29,6 @@ pub enum Error {
     WindowNotFound,
     #[error("the current window size is invalid")]
     WindowInvalidSize,
-    #[error("window capture frame is not available")]
-    WindowFrameNotAvailable,
 
     #[error("platform is not supported")]
     PlatformNotSupported,

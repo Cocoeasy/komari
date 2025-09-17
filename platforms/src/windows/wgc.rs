@@ -2,7 +2,11 @@
 //! Thanks https://github.com/obsproject/obs-studio/blob/cfb23a51ff8acad13dc739c31854d9f451e05298/libobs-d3d11/d3d11-subsystem.cpp#L587
 //! Thanks https://github.com/obsproject/obs-studio/blob/cfb23a51ff8acad13dc739c31854d9f451e05298/libobs-winrt/winrt-capture.cpp#L244
 
-use std::{cmp::min, mem, ptr, slice, sync::mpsc, time::Duration};
+use std::{
+    cmp::min,
+    mem, ptr, slice,
+    sync::{Arc, Mutex, mpsc},
+};
 
 use windows::{
     Foundation::TypedEventHandler,
@@ -14,6 +18,7 @@ use windows::{
         DirectX::{Direct3D11::IDirect3DDevice, DirectXPixelFormat},
         SizeInt32,
     },
+    System::{DispatcherQueue, DispatcherQueueController, DispatcherQueueHandler},
     Win32::{
         Foundation::{HMODULE, HWND, POINT, RECT},
         Graphics::{
@@ -47,48 +52,49 @@ use windows::{
 use super::{Handle, HandleCell};
 use crate::{Error, Result, capture::Frame};
 
-const MAX_FRAME_FAILURE: u32 = 3;
+#[derive(Debug)]
+struct SendWrapper<T> {
+    inner: T,
+}
+
+impl<T> SendWrapper<T> {
+    fn as_inner(&self) -> &T {
+        &self.inner
+    }
+}
+
+impl<T: Clone> Clone for SendWrapper<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+unsafe impl<T> Send for SendWrapper<T> {}
 
 #[derive(Debug)]
 struct WgcCaptureInner {
-    handle: HWND,
+    handle: SendWrapper<HWND>,
     d3d11_device: ID3D11Device,
     d3d11_context: ID3D11DeviceContext,
     d3d11_texture: Option<ID3D11Texture2D>,
     item: GraphicsCaptureItem,
     item_closed_token: i64,
-    d3d_device: IDirect3DDevice,
+    d3d_device: SendWrapper<IDirect3DDevice>,
     session: GraphicsCaptureSession,
+    queue: DispatcherQueue,
     frame_format: DirectXPixelFormat,
     frame_pool: Direct3D11CaptureFramePool,
     frame_last_content_size: SizeInt32,
     frame_arrived_token: i64,
-    frame_timeout: u64,
     frame_rx: mpsc::Receiver<Message>,
-    consecutive_failure: u32,
 }
 
 impl WgcCaptureInner {
     fn grab_with_timeout(&mut self) -> Result<Frame> {
-        let message = self
-            .frame_rx
-            .recv_timeout(Duration::from_millis(self.frame_timeout))
-            .map_err(|_| {
-                self.consecutive_failure += 1;
-                // I don't know man maybe I am just missing something from the docs.
-                // I can't find how to handle device loss without a swap chain.
-                // Even if there is one, I tried and it still doesn't work.
-                // When the game changes resolution or going to cash shop, none of the re-creation
-                // stuff below works. It doesn't even get called back. The item closed callback
-                // sometimes works and sometimes doesn't. This feels like a hack but it works.
-                // I referenced other people code for error handling but this shit still
-                // doesn't work.
-                if self.consecutive_failure >= MAX_FRAME_FAILURE {
-                    Error::WindowNotFound
-                } else {
-                    Error::WindowFrameNotAvailable
-                }
-            })?;
+        let handle = *self.handle.as_inner();
+        let message = self.frame_rx.recv().unwrap();
 
         let frame = match message {
             Message::FrameArrived(frame) => frame,
@@ -101,7 +107,7 @@ impl WgcCaptureInner {
         let mut surface_desc = D3D11_TEXTURE2D_DESC::default();
         unsafe { surface_texture.GetDesc(&mut surface_desc) };
 
-        let texture_rect = get_client_rect(self.handle, surface_desc.Width, surface_desc.Height)?;
+        let texture_rect = get_client_rect(handle, surface_desc.Width, surface_desc.Height)?;
         let texture_width = texture_rect.right - texture_rect.left;
         let texture_height = texture_rect.bottom - texture_rect.top;
         if self.d3d11_texture.as_ref().is_none_or(|texture| {
@@ -118,7 +124,6 @@ impl WgcCaptureInner {
                 surface_desc.Format,
             )?);
         }
-        self.consecutive_failure = 0;
 
         let texture = self.d3d11_texture.as_ref().unwrap();
         let mut resource = D3D11_MAPPED_SUBRESOURCE::default();
@@ -170,9 +175,22 @@ impl WgcCaptureInner {
 
         if frame_content_size != self.frame_last_content_size {
             self.frame_format = DirectXPixelFormat(surface_desc.Format.0);
-            self.frame_pool
-                .Recreate(&self.d3d_device, self.frame_format, 1, frame_content_size)?;
             self.frame_last_content_size = frame_content_size;
+
+            let (recreated_tx, recreated_rx) = mpsc::channel::<()>();
+            let frame_pool = self.frame_pool.clone();
+            let frame_format = self.frame_format;
+            let d3d_device = self.d3d_device.clone();
+            let _ = self.queue.TryEnqueue(&DispatcherQueueHandler::new(move || {
+                let _ =
+                    frame_pool.Recreate(d3d_device.as_inner(), frame_format, 1, frame_content_size);
+                let _ = recreated_tx.send(());
+                Ok(())
+            }));
+
+            if recreated_rx.recv().is_err() {
+                return Err(Error::WindowNotFound);
+            }
         }
 
         Ok(Frame {
@@ -204,60 +222,78 @@ pub struct WgcCapture {
     d3d11_device: ID3D11Device,
     d3d11_context: ID3D11DeviceContext,
     d3d_device: IDirect3DDevice,
-    frame_timeout: u64,
-    inner: Option<WgcCaptureInner>,
+    queue_controller: DispatcherQueueController,
+    inner: Arc<Mutex<Option<WgcCaptureInner>>>,
 }
 
 impl WgcCapture {
-    pub fn new(handle: Handle, frame_timeout: u64) -> Result<Self> {
+    pub fn new(handle: Handle) -> Result<Self> {
         let (d3d11_device, d3d11_context) = create_d3d11_device()?;
         let d3d_device = create_d3d_device(&d3d11_device)?;
+        let queue_controller = DispatcherQueueController::CreateOnDedicatedThread()?;
+
         Ok(Self {
             handle: HandleCell::new(handle),
             d3d11_device,
             d3d11_context,
             d3d_device,
-            frame_timeout,
-            inner: None,
+            queue_controller,
+            inner: Arc::new(Mutex::new(None)),
         })
     }
 
     pub fn grab(&mut self) -> Result<Frame> {
-        if self.inner.is_none()
+        if self.inner.lock().unwrap().is_none()
             && let Some(handle) = self.handle.as_inner()
         {
             self.start_capture(handle)?;
         }
 
-        if let Some(inner) = self.inner.as_mut() {
-            let result = inner.grab_with_timeout();
-            if let Err(Error::WindowNotFound) = result.as_ref() {
-                self.stop_capture();
-            }
-            return result;
+        let mut guard = self.inner.lock().unwrap();
+        let inner = guard.as_mut().ok_or(Error::WindowNotFound)?;
+        let result = inner.grab_with_timeout();
+        if let Err(Error::WindowNotFound) = result.as_ref() {
+            drop(guard);
+            self.stop_capture();
         }
-        Err(Error::WindowNotFound)
+
+        result
     }
 
     pub fn stop_capture(&mut self) {
-        let _ = self.inner.take();
+        let _ = self.inner.lock().unwrap().take();
     }
 
     fn start_capture(&mut self, handle: HWND) -> Result<()> {
-        let (tx, rx) = mpsc::channel::<Message>();
-        let frame_format = DirectXPixelFormat::B8G8R8A8UIntNormalized;
+        let queue = self.queue_controller.DispatcherQueue()?;
+        let queue_clone = queue.clone();
+        let inner_arc = self.inner.clone();
+        let handle = SendWrapper { inner: handle };
+        let d3d11_device = self.d3d11_device.clone();
+        let d3d11_context = self.d3d11_context.clone();
+        let d3d_device = SendWrapper {
+            inner: self.d3d_device.clone(),
+        };
+        let (pending_tx, pending_rx) = mpsc::channel::<()>();
 
-        let item = create_graphics_capture_item(handle)?;
-        let item_closed_tx = tx.clone();
-        let item_closed_token = item.Closed(&TypedEventHandler::new(move |_, _| {
-            item_closed_tx.send(Message::ItemClosed).unwrap();
-            Ok(())
-        }))?;
+        let _ = queue.TryEnqueue(&DispatcherQueueHandler::new(move || {
+            let (tx, rx) = mpsc::channel::<Message>();
+            let frame_format = DirectXPixelFormat::B8G8R8A8UIntNormalized;
 
-        let frame_last_content_size = item.Size()?;
-        let (session, frame_pool) = create_capture_session(&self.d3d_device, &item, frame_format)?;
-        let frame_arrived_token =
-            frame_pool.FrameArrived(&TypedEventHandler::<Direct3D11CaptureFramePool, _>::new(
+            let item = create_graphics_capture_item(*handle.as_inner())?;
+            let item_closed_tx = tx.clone();
+            let item_closed_token = item.Closed(&TypedEventHandler::new(move |_, _| {
+                item_closed_tx.send(Message::ItemClosed).unwrap();
+                Ok(())
+            }))?;
+
+            let frame_last_content_size = item.Size()?;
+            let (session, frame_pool) =
+                create_capture_session(d3d_device.as_inner(), &item, frame_format)?;
+            let frame_arrived_token = frame_pool.FrameArrived(&TypedEventHandler::<
+                Direct3D11CaptureFramePool,
+                _,
+            >::new(
                 move |frame_pool, _| {
                     tx.send(Message::FrameArrived(
                         frame_pool.as_ref().unwrap().TryGetNextFrame().unwrap(),
@@ -266,27 +302,41 @@ impl WgcCapture {
                     Ok(())
                 },
             ))?;
-        session.StartCapture()?;
-        let _ = session.SetIsBorderRequired(false);
+            session.StartCapture()?;
+            let _ = session.SetIsBorderRequired(false);
 
-        self.inner = Some(WgcCaptureInner {
-            handle,
-            d3d11_device: self.d3d11_device.clone(),
-            d3d11_context: self.d3d11_context.clone(),
-            d3d_device: self.d3d_device.clone(),
-            d3d11_texture: None,
-            item,
-            item_closed_token,
-            session,
-            frame_format,
-            frame_pool,
-            frame_last_content_size,
-            frame_arrived_token,
-            frame_timeout: self.frame_timeout,
-            frame_rx: rx,
-            consecutive_failure: 0,
-        });
+            let inner = WgcCaptureInner {
+                handle: handle.clone(),
+                d3d11_device: d3d11_device.clone(),
+                d3d11_context: d3d11_context.clone(),
+                d3d_device: d3d_device.clone(),
+                d3d11_texture: None,
+                item,
+                item_closed_token,
+                session,
+                queue: queue_clone.clone(),
+                frame_format,
+                frame_pool,
+                frame_last_content_size,
+                frame_arrived_token,
+                frame_rx: rx,
+            };
+            *inner_arc.lock().unwrap() = Some(inner);
+            let _ = pending_tx.send(());
+
+            Ok(())
+        }));
+
+        let _ = pending_rx.recv();
         Ok(())
+    }
+}
+
+impl Drop for WgcCapture {
+    fn drop(&mut self) {
+        let _ = self.inner;
+        let _ = self.d3d_device.Close();
+        let _ = self.queue_controller.ShutdownQueueAsync().unwrap().get();
     }
 }
 
@@ -334,13 +384,6 @@ fn get_client_rect(handle: HWND, width: u32, height: u32) -> Result<D3D11_BOX> {
     })
 }
 
-impl Drop for WgcCapture {
-    fn drop(&mut self) {
-        let _ = self.inner;
-        let _ = self.d3d_device.Close();
-    }
-}
-
 #[inline]
 fn create_texture_2d(
     device: &ID3D11Device,
@@ -375,14 +418,14 @@ fn create_capture_session(
     device: &IDirect3DDevice,
     item: &GraphicsCaptureItem,
     format: DirectXPixelFormat,
-) -> Result<(GraphicsCaptureSession, Direct3D11CaptureFramePool)> {
+) -> windows::core::Result<(GraphicsCaptureSession, Direct3D11CaptureFramePool)> {
     let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(device, format, 1, item.Size()?)?;
     let session = pool.CreateCaptureSession(item)?;
     Ok((session, pool))
 }
 
 #[inline]
-fn create_graphics_capture_item(handle: HWND) -> Result<GraphicsCaptureItem> {
+fn create_graphics_capture_item(handle: HWND) -> windows::core::Result<GraphicsCaptureItem> {
     let factory = unsafe {
         RoGetActivationFactory::<IGraphicsCaptureItemInterop>(&HSTRING::from(
             GraphicsCaptureItem::NAME,

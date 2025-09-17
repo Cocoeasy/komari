@@ -15,7 +15,7 @@ pub struct Frame {
 pub enum WindowsCaptureKind {
     BitBlt,
     BitBltArea,
-    Wgc(u64),
+    Wgc,
 }
 
 #[derive(Debug)]
@@ -82,9 +82,7 @@ impl Capture {
             WindowsCaptureKind::BitBltArea => {
                 WindowsCapture::BitBltArea(WindowBoxCapture::default())
             }
-            WindowsCaptureKind::Wgc(frame_timeout_millis) => {
-                WindowsCapture::Wgc(WgcCapture::new(self.window.windows, frame_timeout_millis)?)
-            }
+            WindowsCaptureKind::Wgc => WindowsCapture::Wgc(WgcCapture::new(self.window.windows)?),
         };
         self.windows_kind = kind;
 

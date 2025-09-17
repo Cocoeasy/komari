@@ -21,7 +21,7 @@ use platforms::{
 
 use crate::{
     CaptureMode, KeyBinding,
-    context::{MS_PER_TICK, MS_PER_TICK_F32},
+    context::MS_PER_TICK_F32,
     database::Seeds,
     rng::Rng,
     rpc::{
@@ -858,7 +858,7 @@ impl Capture for DefaultCapture {
         if cfg!(windows) {
             let kind = match mode {
                 CaptureMode::BitBlt => WindowsCaptureKind::BitBlt,
-                CaptureMode::WindowsGraphicsCapture => WindowsCaptureKind::Wgc(MS_PER_TICK),
+                CaptureMode::WindowsGraphicsCapture => WindowsCaptureKind::Wgc,
                 CaptureMode::BitBltArea => WindowsCaptureKind::BitBltArea,
             };
             let _ = self.inner.windows_capture_kind(kind);
