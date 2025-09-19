@@ -1675,6 +1675,11 @@ fn detect_rune_arrows(
                 .set_scalar(Scalar::default())?;
         }
         mat_rune_region = BoxedRef::from(mat_clone);
+
+        #[cfg(debug_assertions)]
+        if calibrating.is_spin_testing {
+            debug_mat("Rune Region Spin Arrows Removed", &mat_rune_region, 0, &[]);
+        }
     }
 
     let result = detect_rune_arrows_with_scores_regions(&mat_rune_region)

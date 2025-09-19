@@ -177,164 +177,16 @@ pub fn update_use_key_context(
     state: &mut PlayerState,
     use_key: UseKey,
 ) -> Player {
-    // TODO: Am I cooked?
     let next = match use_key.stage {
-        UseKeyStage::Precondition => {
-            debug_assert!(use_key.current_count < use_key.count);
-            if !ensure_direction(state, use_key.direction) {
-                return Player::UseKey(UseKey {
-                    stage: UseKeyStage::ChangingDirection(Timeout::default()),
-                    ..use_key
-                });
-            }
-            if !ensure_use_with(state, use_key) {
-                return Player::UseKey(UseKey {
-                    stage: UseKeyStage::EnsuringUseWith,
-                    ..use_key
-                });
-            }
-            debug_assert!(
-                matches!(use_key.direction, ActionKeyDirection::Any)
-                    || use_key.direction == state.last_known_direction
-            );
-            debug_assert!(
-                matches!(use_key.with, ActionKeyWith::Any)
-                    || (matches!(use_key.with, ActionKeyWith::Stationary) && state.is_stationary)
-                    || (matches!(use_key.with, ActionKeyWith::DoubleJump)
-                        && matches!(state.last_movement, Some(LastMovement::DoubleJumping)))
-            );
-            let next = Player::UseKey(UseKey {
-                stage: UseKeyStage::Using(Timeout::default(), false),
-                ..use_key
-            });
-            if use_key.wait_before_use_ticks > 0 {
-                state.stalling_timeout_state = Some(next);
-                Player::Stalling(Timeout::default(), use_key.wait_before_use_ticks)
-            } else {
-                state.use_immediate_control_flow = true;
-                next
-            }
-        }
+        UseKeyStage::Precondition => update_precondition(state, use_key),
         UseKeyStage::ChangingDirection(timeout) => {
-            let key = match use_key.direction {
-                ActionKeyDirection::Left => KeyKind::Left,
-                ActionKeyDirection::Right => KeyKind::Right,
-                ActionKeyDirection::Any => unreachable!(),
-            };
-            match next_timeout_lifecycle(timeout, CHANGE_DIRECTION_TIMEOUT) {
-                Lifecycle::Started(timeout) => {
-                    let _ = context.input.send_key_down(key);
-                    Player::UseKey(UseKey {
-                        stage: UseKeyStage::ChangingDirection(timeout),
-                        ..use_key
-                    })
-                }
-                Lifecycle::Ended => {
-                    let _ = context.input.send_key_up(key);
-                    state.last_known_direction = use_key.direction;
-                    Player::UseKey(UseKey {
-                        stage: UseKeyStage::Precondition,
-                        ..use_key
-                    })
-                }
-                Lifecycle::Updated(timeout) => Player::UseKey(UseKey {
-                    stage: UseKeyStage::ChangingDirection(timeout),
-                    ..use_key
-                }),
-            }
+            update_changing_direction(context, state, use_key, timeout)
         }
-        UseKeyStage::EnsuringUseWith => match use_key.with {
-            ActionKeyWith::Any => unreachable!(),
-            ActionKeyWith::Stationary => {
-                let stage = if state.is_stationary {
-                    UseKeyStage::Precondition
-                } else {
-                    UseKeyStage::EnsuringUseWith
-                };
-                Player::UseKey(UseKey { stage, ..use_key })
-            }
-            ActionKeyWith::DoubleJump => {
-                let pos = state.last_known_pos.expect("in positional context");
-                Player::DoubleJumping(DoubleJumping::new(
-                    Moving::new(pos, pos, false, None),
-                    true,
-                    true,
-                ))
-            }
-        },
+        UseKeyStage::EnsuringUseWith => update_ensuring_use_with(state, use_key),
         UseKeyStage::Using(timeout, completed) => {
-            debug_assert!(use_key.link_key.is_some() || !completed);
-            debug_assert!(state.stalling_timeout_state.is_none());
-            match use_key.link_key {
-                Some(LinkKeyBinding::After(_)) => {
-                    if !timeout.started {
-                        let _ = context.input.send_key(use_key.key.into());
-                    }
-                    if !completed {
-                        return update_link_key(
-                            context,
-                            state.config.class,
-                            state.config.jump_key,
-                            use_key,
-                            timeout,
-                            completed,
-                        );
-                    }
-                }
-                Some(LinkKeyBinding::AtTheSame(key)) => {
-                    let _ = context.input.send_key(key.into());
-                    let _ = context.input.send_key(use_key.key.into());
-                }
-                Some(LinkKeyBinding::Along(_)) => {
-                    if !completed {
-                        return update_link_key(
-                            context,
-                            state.config.class,
-                            state.config.jump_key,
-                            use_key,
-                            timeout,
-                            completed,
-                        );
-                    }
-                }
-                Some(LinkKeyBinding::Before(_)) | None => {
-                    if use_key.link_key.is_some() && !completed {
-                        return update_link_key(
-                            context,
-                            state.config.class,
-                            state.config.jump_key,
-                            use_key,
-                            timeout,
-                            completed,
-                        );
-                    }
-                    debug_assert!(use_key.link_key.is_none() || completed);
-                    let _ = context.input.send_key(use_key.key.into());
-                }
-            }
-            let next = Player::UseKey(UseKey {
-                stage: UseKeyStage::Postcondition,
-                ..use_key
-            });
-            if use_key.wait_after_use_ticks > 0 {
-                state.stalling_timeout_state = Some(next);
-                Player::Stalling(Timeout::default(), use_key.wait_after_use_ticks)
-            } else {
-                next
-            }
+            update_using(context, state, use_key, timeout, completed)
         }
-        UseKeyStage::Postcondition => {
-            debug_assert!(state.stalling_timeout_state.is_none());
-            if use_key.current_count + 1 < use_key.count {
-                Player::UseKey(UseKey {
-                    current_count: use_key.current_count + 1,
-                    stage: UseKeyStage::Precondition,
-                    ..use_key
-                })
-            } else {
-                Player::Idle
-            }
-        }
+        UseKeyStage::Postcondition => update_post_condition(use_key),
     };
 
     on_action_state_mut(
@@ -382,6 +234,167 @@ pub fn update_use_key_context(
     )
 }
 
+fn update_post_condition(use_key: UseKey) -> Player {
+    if use_key.current_count + 1 < use_key.count {
+        Player::UseKey(UseKey {
+            current_count: use_key.current_count + 1,
+            stage: UseKeyStage::Precondition,
+            ..use_key
+        })
+    } else {
+        Player::Idle
+    }
+}
+
+fn update_using(
+    context: &Context,
+    state: &mut PlayerState,
+    use_key: UseKey,
+    timeout: Timeout,
+    completed: bool,
+) -> Player {
+    match use_key.link_key {
+        Some(LinkKeyBinding::After(_)) => {
+            if !timeout.started {
+                let _ = context.input.send_key(use_key.key.into());
+            }
+            if !completed {
+                return update_link_key(
+                    context,
+                    state.config.class,
+                    state.config.jump_key,
+                    use_key,
+                    timeout,
+                    completed,
+                );
+            }
+        }
+        Some(LinkKeyBinding::AtTheSame(key)) => {
+            let _ = context.input.send_key(key.into());
+            let _ = context.input.send_key(use_key.key.into());
+        }
+        Some(LinkKeyBinding::Along(_)) => {
+            if !completed {
+                return update_link_key(
+                    context,
+                    state.config.class,
+                    state.config.jump_key,
+                    use_key,
+                    timeout,
+                    completed,
+                );
+            }
+        }
+        Some(LinkKeyBinding::Before(_)) | None => {
+            if use_key.link_key.is_some() && !completed {
+                return update_link_key(
+                    context,
+                    state.config.class,
+                    state.config.jump_key,
+                    use_key,
+                    timeout,
+                    completed,
+                );
+            }
+            let _ = context.input.send_key(use_key.key.into());
+        }
+    }
+
+    let next = Player::UseKey(UseKey {
+        stage: UseKeyStage::Postcondition,
+        ..use_key
+    });
+    if use_key.wait_after_use_ticks > 0 {
+        state.stalling_timeout_state = Some(next);
+        Player::Stalling(Timeout::default(), use_key.wait_after_use_ticks)
+    } else {
+        next
+    }
+}
+
+fn update_ensuring_use_with(state: &mut PlayerState, use_key: UseKey) -> Player {
+    match use_key.with {
+        ActionKeyWith::Any => unreachable!(),
+        ActionKeyWith::Stationary => {
+            let stage = if state.is_stationary {
+                UseKeyStage::Precondition
+            } else {
+                UseKeyStage::EnsuringUseWith
+            };
+            Player::UseKey(UseKey { stage, ..use_key })
+        }
+        ActionKeyWith::DoubleJump => {
+            let pos = state.last_known_pos.expect("in positional context");
+            Player::DoubleJumping(DoubleJumping::new(
+                Moving::new(pos, pos, false, None),
+                true,
+                true,
+            ))
+        }
+    }
+}
+
+fn update_changing_direction(
+    context: &Context,
+    state: &mut PlayerState,
+    use_key: UseKey,
+    timeout: Timeout,
+) -> Player {
+    let key = match use_key.direction {
+        ActionKeyDirection::Left => KeyKind::Left,
+        ActionKeyDirection::Right => KeyKind::Right,
+        ActionKeyDirection::Any => unreachable!(),
+    };
+    match next_timeout_lifecycle(timeout, CHANGE_DIRECTION_TIMEOUT) {
+        Lifecycle::Started(timeout) => {
+            let _ = context.input.send_key_down(key);
+            Player::UseKey(UseKey {
+                stage: UseKeyStage::ChangingDirection(timeout),
+                ..use_key
+            })
+        }
+        Lifecycle::Ended => {
+            let _ = context.input.send_key_up(key);
+            state.last_known_direction = use_key.direction;
+            Player::UseKey(UseKey {
+                stage: UseKeyStage::Precondition,
+                ..use_key
+            })
+        }
+        Lifecycle::Updated(timeout) => Player::UseKey(UseKey {
+            stage: UseKeyStage::ChangingDirection(timeout),
+            ..use_key
+        }),
+    }
+}
+
+fn update_precondition(state: &mut PlayerState, use_key: UseKey) -> Player {
+    if !ensure_direction(state, use_key.direction) {
+        return Player::UseKey(UseKey {
+            stage: UseKeyStage::ChangingDirection(Timeout::default()),
+            ..use_key
+        });
+    }
+    if !ensure_use_with(state, use_key) {
+        return Player::UseKey(UseKey {
+            stage: UseKeyStage::EnsuringUseWith,
+            ..use_key
+        });
+    }
+
+    let next = Player::UseKey(UseKey {
+        stage: UseKeyStage::Using(Timeout::default(), false),
+        ..use_key
+    });
+    if use_key.wait_before_use_ticks > 0 {
+        state.stalling_timeout_state = Some(next);
+        Player::Stalling(Timeout::default(), use_key.wait_before_use_ticks)
+    } else {
+        state.use_immediate_control_flow = true;
+        next
+    }
+}
+
 #[inline]
 fn ensure_direction(state: &PlayerState, direction: ActionKeyDirection) -> bool {
     match direction {
@@ -412,7 +425,6 @@ fn update_link_key(
     timeout: Timeout,
     completed: bool,
 ) -> Player {
-    debug_assert!(!timeout.started || !completed);
     let link_key = use_key.link_key.unwrap();
     let link_key_timeout = if matches!(link_key, LinkKeyBinding::Along(_)) {
         4
@@ -427,25 +439,35 @@ fn update_link_key(
 
     match next_timeout_lifecycle(timeout, link_key_timeout) {
         Lifecycle::Started(timeout) => {
-            if let LinkKeyBinding::Before(key) = link_key {
-                let _ = context.input.send_key(key.into());
-            } else if let LinkKeyBinding::Along(key) = link_key {
-                let _ = context.input.send_key_down(key.into());
+            match link_key {
+                LinkKeyBinding::Before(key) => {
+                    let _ = context.input.send_key(key.into());
+                }
+                LinkKeyBinding::Along(key) => {
+                    let _ = context.input.send_key_down(key.into());
+                }
+                LinkKeyBinding::AtTheSame(_) | LinkKeyBinding::After(_) => (),
             }
+
             Player::UseKey(UseKey {
                 stage: UseKeyStage::Using(timeout, completed),
                 ..use_key
             })
         }
         Lifecycle::Ended => {
-            if let LinkKeyBinding::After(key) = link_key {
-                let _ = context.input.send_key(key.into());
-                if matches!(class, Class::Blaster) && KeyKind::from(key) != jump_key {
-                    let _ = context.input.send_key(jump_key);
+            match link_key {
+                LinkKeyBinding::After(key) => {
+                    let _ = context.input.send_key(key.into());
+                    if matches!(class, Class::Blaster) && KeyKind::from(key) != jump_key {
+                        let _ = context.input.send_key(jump_key);
+                    }
                 }
-            } else if let LinkKeyBinding::Along(key) = link_key {
-                let _ = context.input.send_key_up(key.into());
+                LinkKeyBinding::Along(key) => {
+                    let _ = context.input.send_key_up(key.into());
+                }
+                LinkKeyBinding::AtTheSame(_) | LinkKeyBinding::Before(_) => (),
             }
+
             Player::UseKey(UseKey {
                 stage: UseKeyStage::Using(timeout, true),
                 ..use_key
@@ -457,6 +479,7 @@ fn update_link_key(
             {
                 let _ = context.input.send_key(use_key.key.into());
             }
+
             Player::UseKey(UseKey {
                 stage: UseKeyStage::Using(timeout, completed),
                 ..use_key
