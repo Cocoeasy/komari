@@ -1133,10 +1133,10 @@ where
 
 fn delete_from_table<T: Identifiable>(table: &str, data: &T) -> Result<()> {
     fn inner(table: &str, id: Option<i64>) -> Result<()> {
-        if id.is_some() {
+        if let Some(id) = id {
             let conn = CONNECTION.lock().unwrap();
             let stmt = format!("DELETE FROM {table} WHERE id = ?1;");
-            let deleted = conn.execute(&stmt, [id.unwrap()])?;
+            let deleted = conn.execute(&stmt, [id])?;
 
             if deleted > 0 {
                 return Ok(());
