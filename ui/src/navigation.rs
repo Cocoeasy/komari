@@ -376,7 +376,20 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
     use_effect(move || {
         let paths = paths_view();
         if !paths.is_empty() && selected_paths.peek().is_none() {
-            selected_paths.set(paths.into_iter().next());
+            let minimap_paths_id = minimap
+                .peek()
+                .as_ref()
+                .and_then(|minimap| minimap.paths_id_index)
+                .map(|(id, _)| id);
+            if let Some(paths) = paths
+                .iter()
+                .find(|paths| paths.id == minimap_paths_id)
+                .cloned()
+            {
+                selected_paths.set(Some(paths));
+            } else {
+                selected_paths.set(paths.into_iter().next());
+            }
         }
     });
     use_future(move || async move {
