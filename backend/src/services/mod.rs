@@ -168,7 +168,7 @@ impl DefaultRequestHandler<'_> {
                     let kind = if self.args.context.operation.halting() {
                         RotateKind::Run
                     } else {
-                        RotateKind::Halt
+                        RotateKind::TemporaryHalt
                     };
                     self.update_halting(kind);
                 }
