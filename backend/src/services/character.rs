@@ -39,6 +39,7 @@ impl CharacterService for DefaultCharacterService {
         if let Some(character) = self.character.as_ref() {
             state.config.class = character.class;
             state.config.disable_adjusting = character.disable_adjusting;
+            state.config.disable_teleport_on_fall = character.disable_teleport_on_fall;
             state.config.interact_key = character.interact_key.key.into();
             state.config.grappling_key = character.ropelift_key.map(|key| key.key.into());
             state.config.teleport_key = character.teleport_key.map(|key| key.key.into());
@@ -68,6 +69,7 @@ mod tests {
         Character {
             class: Class::Cadena,
             disable_adjusting: true,
+            disable_teleport_on_fall: true,
             interact_key: KeyBindingConfiguration {
                 key: KeyBinding::Z,
                 ..Default::default()
@@ -147,6 +149,10 @@ mod tests {
 
         assert_eq!(state.config.class, character.class);
         assert_eq!(state.config.disable_adjusting, character.disable_adjusting);
+        assert_eq!(
+            state.config.disable_teleport_on_fall,
+            character.disable_teleport_on_fall
+        );
         assert_eq!(state.config.interact_key, KeyKind::Z);
         assert_eq!(state.config.grappling_key, Some(KeyKind::V));
         assert_eq!(state.config.teleport_key, Some(KeyKind::X));

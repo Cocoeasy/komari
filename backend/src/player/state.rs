@@ -109,6 +109,8 @@ pub struct PlayerConfiguration {
     pub class: Class,
     /// Whether to disable [`Player::Adjusting`].
     pub disable_adjusting: bool,
+    /// Whether to disable teleportation in [`Player::Falling`].
+    pub disable_teleport_on_fall: bool,
 
     /// Enables platform pathing for rune.
     pub rune_platforms_pathing: bool,
@@ -159,6 +161,7 @@ impl Default for PlayerConfiguration {
         Self {
             class: Default::default(),
             disable_adjusting: Default::default(),
+            disable_teleport_on_fall: Default::default(),
             rune_platforms_pathing: Default::default(),
             rune_platforms_pathing_up_jump_only: Default::default(),
             auto_mob_platforms_pathing: Default::default(),

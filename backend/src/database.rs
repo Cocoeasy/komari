@@ -351,6 +351,8 @@ pub struct Character {
     pub extreme_gold_potion_key: KeyBindingConfiguration,
     pub class: Class,
     pub disable_adjusting: bool,
+    #[serde(default)]
+    pub disable_teleport_on_fall: bool,
     pub actions: Vec<ActionConfiguration>,
     #[serde(default, deserialize_with = "deserialize_with_ok_or_default")]
     pub elite_boss_behavior: EliteBossBehavior,
@@ -419,6 +421,7 @@ impl Default for Character {
             extreme_gold_potion_key: KeyBindingConfiguration::default(),
             class: Class::default(),
             disable_adjusting: false,
+            disable_teleport_on_fall: false,
             actions: vec![],
             elite_boss_behavior_key: KeyBinding::default(),
             elite_boss_behavior: EliteBossBehavior::default(),

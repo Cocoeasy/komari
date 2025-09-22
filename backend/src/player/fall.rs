@@ -76,7 +76,8 @@ pub fn update_falling_context(
 
             // Do the fall
             let _ = context.input.send_key_down(KeyKind::Down);
-            if let Some(key) = state.config.teleport_key
+            if !state.config.disable_teleport_on_fall
+                && let Some(key) = state.config.teleport_key
                 && y_distance < TELEPORT_FALL_THRESHOLD
             {
                 let _ = context.input.send_key(key);
