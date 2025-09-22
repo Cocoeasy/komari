@@ -294,6 +294,12 @@ impl DefaultRequestHandler<'_> {
                         .send(EditInteractionResponse::new().content("Bot stopped running."));
                     self.update_halt_or_panic(true, go_to_town);
                 }
+                BotCommandKind::Suspend => {
+                    let _ = command
+                        .sender
+                        .send(EditInteractionResponse::new().content("Bot attempted to suspend."));
+                    self.update_halting(RotateKind::TemporaryHalt);
+                }
                 BotCommandKind::Status => {
                     let (status, frame) = state_and_frame(self.args.context);
                     let attachment =

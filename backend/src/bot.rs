@@ -27,6 +27,7 @@ use tokio::{
 pub enum BotCommandKind {
     Start,
     Stop { go_to_town: bool },
+    Suspend,
     Status,
     Chat { content: String },
     Action { action: BotAction, count: u32 },
@@ -34,10 +35,15 @@ pub enum BotCommandKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, EnumString, EnumMessage, Display)]
 enum BotCommandKindInner {
-    #[strum(to_string = "start", message = "Start the bot actions")]
+    #[strum(to_string = "start", message = "Start or resume the bot actions")]
     Start,
     #[strum(to_string = "stop", message = "Stop the bot actions")]
     Stop,
+    #[strum(
+        to_string = "suspend",
+        message = "Suspend the bot actions (stop completely if run/stop cycle not used)"
+    )]
+    Suspend,
     #[strum(to_string = "status", message = "See bot current status")]
     Status,
     #[strum(
@@ -177,6 +183,7 @@ impl EventHandler for DefaultEventHandler {
                     BotCommandKindInner::StartStream
                     | BotCommandKindInner::StopStream
                     | BotCommandKindInner::Start
+                    | BotCommandKindInner::Suspend
                     | BotCommandKindInner::Status => command,
                 }
             })
@@ -228,6 +235,15 @@ impl EventHandler for DefaultEventHandler {
                         &context,
                         &command,
                         BotCommandKind::Stop { go_to_town },
+                    )
+                    .await;
+                }
+                BotCommandKindInner::Suspend => {
+                    single_command(
+                        &self.command_sender,
+                        &context,
+                        &command,
+                        BotCommandKind::Suspend,
                     )
                     .await;
                 }
