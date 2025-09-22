@@ -92,7 +92,7 @@ struct WgcCaptureInner {
 }
 
 impl WgcCaptureInner {
-    fn grab_with_timeout(&mut self) -> Result<Frame> {
+    fn grab(&mut self) -> Result<Frame> {
         let handle = *self.handle.as_inner();
         let message = self.frame_rx.recv().unwrap();
 
@@ -251,7 +251,7 @@ impl WgcCapture {
 
         let mut guard = self.inner.lock().unwrap();
         let inner = guard.as_mut().ok_or(Error::WindowNotFound)?;
-        let result = inner.grab_with_timeout();
+        let result = inner.grab();
         if let Err(Error::WindowNotFound) = result.as_ref() {
             drop(guard);
             self.stop_capture();
@@ -280,7 +280,9 @@ impl WgcCapture {
             let (tx, rx) = mpsc::channel::<Message>();
             let frame_format = DirectXPixelFormat::B8G8R8A8UIntNormalized;
 
-            let item = create_graphics_capture_item(*handle.as_inner())?;
+            let Ok(item) = create_graphics_capture_item(*handle.as_inner()) else {
+                return Ok(()); // Avoids crash when open game after bot
+            };
             let item_closed_tx = tx.clone();
             let item_closed_token = item.Closed(&TypedEventHandler::new(move |_, _| {
                 item_closed_tx.send(Message::ItemClosed).unwrap();
