@@ -76,13 +76,13 @@ impl BuffState {
             BuffKind::BonusExpCoupon => character.bonus_exp_key.enabled,
             BuffKind::LegionWealth => character.legion_wealth_key.enabled,
             BuffKind::LegionLuck => character.legion_luck_key.enabled,
-            BuffKind::WealthAcquisitionPotion => character.wealth_acquisition_potion_key.enabled,
-            BuffKind::ExpAccumulationPotion => character.exp_accumulation_potion_key.enabled,
-            BuffKind::SmallWealthAcquisitionPotion => {
-                character.small_wealth_acquisition_potion_key.enabled
+            BuffKind::WealthAcquisitionPotion | BuffKind::SmallWealthAcquisitionPotion => {
+                character.wealth_acquisition_potion_key.enabled
+                    || character.small_wealth_acquisition_potion_key.enabled
             }
-            BuffKind::SmallExpAccumulationPotion => {
-                character.small_exp_accumulation_potion_key.enabled
+            BuffKind::ExpAccumulationPotion | BuffKind::SmallExpAccumulationPotion => {
+                character.exp_accumulation_potion_key.enabled
+                    || character.small_exp_accumulation_potion_key.enabled
             }
             BuffKind::ForTheGuild => character.for_the_guild_key.enabled,
             BuffKind::HardHitter => character.hard_hitter_key.enabled,

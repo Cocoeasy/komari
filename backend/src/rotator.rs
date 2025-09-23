@@ -1018,6 +1018,14 @@ fn solve_rune_priority_action() -> PriorityAction {
 /// - The specified buff is currently missing.
 #[inline]
 fn buff_priority_action(buff: BuffKind, key: KeyBinding) -> PriorityAction {
+    macro_rules! skip_if_has_buff {
+        ($context:expr, $variant:ident) => {
+            if !matches!($context.buffs[BuffKind::$variant], Buff::No) {
+                return ConditionResult::Skip;
+            }
+        };
+    }
+
     PriorityAction {
         condition: Condition(Box::new(move |context, _, last_queued_time| {
             if !at_least_millis_passed_since(last_queued_time, COOLDOWN_BETWEEN_QUEUE_MILLIS) {
@@ -1026,6 +1034,23 @@ fn buff_priority_action(buff: BuffKind, key: KeyBinding) -> PriorityAction {
             if !matches!(context.minimap, Minimap::Idle(_)) {
                 return ConditionResult::Skip;
             }
+
+            match buff {
+                BuffKind::SmallWealthAcquisitionPotion => {
+                    skip_if_has_buff!(context, WealthAcquisitionPotion)
+                }
+                BuffKind::WealthAcquisitionPotion => {
+                    skip_if_has_buff!(context, SmallWealthAcquisitionPotion)
+                }
+                BuffKind::SmallExpAccumulationPotion => {
+                    skip_if_has_buff!(context, ExpAccumulationPotion)
+                }
+                BuffKind::ExpAccumulationPotion => {
+                    skip_if_has_buff!(context, SmallExpAccumulationPotion)
+                }
+                _ => (),
+            }
+
             if matches!(context.buffs[buff], Buff::No) {
                 ConditionResult::Queue
             } else {
