@@ -9,7 +9,7 @@ pub enum ButtonKind {
 
 #[component]
 pub fn Button(
-    text: String,
+    label: String,
     kind: ButtonKind,
     on_click: EventHandler,
     #[props(default = false)] disabled: bool,
@@ -29,7 +29,7 @@ pub fn Button(
                 e.stop_propagation();
                 on_click(());
             },
-            {text}
+            {label}
         }
     }
 }

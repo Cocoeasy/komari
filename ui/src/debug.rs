@@ -30,49 +30,49 @@ pub fn Debug() -> Element {
             Section { name: "Debug",
                 div { class: "grid grid-cols-2 gap-3",
                     Button {
-                        text: "Capture color image",
+                        label: "Capture color image",
                         kind: ButtonKind::Secondary,
                         on_click: move |_| async {
                             capture_image(false).await;
                         },
                     }
                     Button {
-                        text: "Capture grayscale image",
+                        label: "Capture grayscale image",
                         kind: ButtonKind::Secondary,
                         on_click: move |_| async {
                             capture_image(true).await;
                         },
                     }
                     Button {
-                        text: "Infer rune",
+                        label: "Infer rune",
                         kind: ButtonKind::Secondary,
                         on_click: move |_| async {
                             infer_rune().await;
                         },
                     }
                     Button {
-                        text: "Infer minimap",
+                        label: "Infer minimap",
                         kind: ButtonKind::Secondary,
                         on_click: move |_| async {
                             infer_minimap().await;
                         },
                     }
                     Button {
-                        text: "Spin rune sandbox test",
+                        label: "Spin rune sandbox test",
                         kind: ButtonKind::Secondary,
                         on_click: move |_| async {
                             test_spin_rune().await;
                         },
                     }
                     Button {
-                        text: if state().is_recording { "Stop recording" } else { "Start recording" },
+                        label: if state().is_recording { "Stop recording" } else { "Start recording" },
                         kind: ButtonKind::Secondary,
                         on_click: move |_| async move {
                             record_images(!state.peek().is_recording).await;
                         },
                     }
                     Button {
-                        text: if state().is_rune_auto_saving { "Stop auto saving rune" } else { "Start auto saving rune" },
+                        label: if state().is_rune_auto_saving { "Stop auto saving rune" } else { "Start auto saving rune" },
                         kind: ButtonKind::Secondary,
                         on_click: move |_| async move {
                             auto_save_rune(!state.peek().is_rune_auto_saving).await;

@@ -120,7 +120,7 @@ fn SectionCapture(
                 }
             }
             Button {
-                text: "Refresh handles",
+                label: "Refresh handles",
                 kind: ButtonKind::Secondary,
                 on_click: move |_| async move {
                     refresh_capture_handles().await;
@@ -636,7 +636,7 @@ fn SectionOthers(
                     a { id: export_element_id(), class: "w-0 h-0 invisible" }
                     Button {
                         class: "w-full",
-                        text: "Export",
+                        label: "Export",
                         kind: ButtonKind::Primary,
                         on_click: move |_| {
                             export(());
@@ -662,7 +662,7 @@ fn SectionOthers(
                     }
                     Button {
                         class: "w-full",
-                        text: "Import",
+                        label: "Import",
                         kind: ButtonKind::Primary,
                         on_click: move |_| {
                             import(());
@@ -767,7 +767,7 @@ fn SettingsTextInput(
         }
         div { class: "flex items-end",
             Button {
-                text: button_label,
+                label: button_label,
                 kind: ButtonKind::Primary,
                 on_click: move |_| {
                     on_value(text.peek().clone());

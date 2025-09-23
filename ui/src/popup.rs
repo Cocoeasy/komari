@@ -31,7 +31,7 @@ pub fn Popup(
                             if let Some((confirm_button, on_confirm)) = confirm {
                                 Button {
                                     class: "flex-grow border border-gray-600",
-                                    text: confirm_button,
+                                    label: confirm_button,
                                     kind: ButtonKind::Secondary,
                                     on_click: move |_| {
                                         on_confirm(());
@@ -41,7 +41,7 @@ pub fn Popup(
                             if let Some((cancel_button, on_cancel)) = cancel {
                                 Button {
                                     class: "flex-grow border border-gray-600",
-                                    text: cancel_button,
+                                    label: cancel_button,
                                     kind: ButtonKind::Secondary,
                                     on_click: move |_| {
                                         on_cancel(());

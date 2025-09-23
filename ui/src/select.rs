@@ -136,7 +136,7 @@ pub fn TextSelect(
             }
             Button {
                 class: "w-20",
-                text: if creating_text().is_some() { "Save" } else { "Create" },
+                label: if creating_text().is_some() { "Save" } else { "Create" },
                 kind: ButtonKind::Primary,
                 disabled,
                 on_click: move |_| {
@@ -155,7 +155,7 @@ pub fn TextSelect(
             }
             Button {
                 class: "w-20",
-                text: if creating_text().is_some() { "Cancel" } else { "Delete" },
+                label: if creating_text().is_some() { "Cancel" } else { "Delete" },
                 kind: ButtonKind::Danger,
                 disabled: select_or_delete_disabled && creating_text().is_none(),
                 on_click: move |_| {

@@ -809,7 +809,17 @@ fn SectionOthers(character_view: Memo<Character>, save_character: Callback<Chara
                     },
                     selected: character_view().class,
                 }
-                div {}
+                CharactersCheckbox {
+                    label: "Disable teleport on fall",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |disable_teleport_on_fall| {
+                        save_character(Character {
+                            disable_teleport_on_fall,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().disable_teleport_on_fall,
+                }
                 CharactersCheckbox {
                     label: "Disable walking",
                     disabled: character_view().id.is_none(),
@@ -852,7 +862,7 @@ fn SectionOthers(character_view: Memo<Character>, save_character: Callback<Chara
                         }
                         Button {
                             class: "w-full",
-                            text: "Export",
+                            label: "Export",
                             kind: ButtonKind::Primary,
                             on_click: move |_| {
                                 export(());
@@ -874,7 +884,7 @@ fn SectionOthers(character_view: Memo<Character>, save_character: Callback<Chara
                         }
                         Button {
                             class: "w-full",
-                            text: "Import",
+                            label: "Import",
                             kind: ButtonKind::Primary,
                             on_click: move |_| {
                                 import(());
@@ -1069,7 +1079,7 @@ fn ActionConfigurationInput(
         div { class: "grid grid-cols-3 gap-3 pb-10 overflow-y-auto scrollbar",
             if modifying {
                 Button {
-                    text: "Copy",
+                    label: "Copy",
                     kind: ButtonKind::Primary,
                     on_click: on_copy,
                     class: "label border-b border-gray-600 col-span-3",
@@ -1204,7 +1214,7 @@ fn ActionConfigurationInput(
         div { class: "flex w-full gap-3 absolute bottom-0 py-2 bg-gray-900",
             Button {
                 class: "flex-grow border border-gray-600",
-                text: if modifying { "Save" } else { "Add" },
+                label: if modifying { "Save" } else { "Add" },
                 kind: ButtonKind::Primary,
                 on_click: move |_| {
                     on_value(*action.peek());
@@ -1212,7 +1222,7 @@ fn ActionConfigurationInput(
             }
             Button {
                 class: "flex-grow border border-gray-600",
-                text: "Cancel",
+                label: "Cancel",
                 kind: ButtonKind::Secondary,
                 on_click: move |_| {
                     on_cancel(());
@@ -1288,7 +1298,7 @@ fn ActionConfigurationList(
                 }
             }
             Button {
-                text: "Add action",
+                label: "Add action",
                 kind: ButtonKind::Secondary,
                 disabled,
                 on_click: move |_| {

@@ -727,7 +727,7 @@ fn Buttons(
         div { class: "flex h-10 justify-center items-center gap-4",
             Button {
                 class: "w-20",
-                text: start_stop_text(),
+                label: start_stop_text(),
                 kind: ButtonKind::Primary,
                 disabled: disabled(),
                 on_click: move || async move {
@@ -740,7 +740,7 @@ fn Buttons(
             }
             Button {
                 class: "w-20",
-                text: suspend_resume_text(),
+                label: suspend_resume_text(),
                 kind: ButtonKind::Primary,
                 disabled: suspend_resume_disabled(),
                 on_click: move || async move {
@@ -753,7 +753,7 @@ fn Buttons(
             }
             Button {
                 class: "w-20",
-                text: "Re-detect",
+                label: "Re-detect",
                 kind: ButtonKind::Primary,
                 on_click: move |_| async move {
                     redetect_minimap().await;
@@ -836,7 +836,7 @@ fn ImportExport(minimap: ReadOnlySignal<Option<MinimapData>>) -> Element {
                 }
                 Button {
                     class: "w-20",
-                    text: "Import",
+                    label: "Import",
                     kind: ButtonKind::Primary,
                     on_click: move |_| {
                         import(());
@@ -847,7 +847,7 @@ fn ImportExport(minimap: ReadOnlySignal<Option<MinimapData>>) -> Element {
                 a { id: export_element_id(), class: "w-0 h-0 invisible" }
                 Button {
                     class: "w-20",
-                    text: "Export",
+                    label: "Export",
                     kind: ButtonKind::Primary,
                     disabled: minimap().is_none(),
                     on_click: move |_| {

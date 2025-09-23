@@ -494,7 +494,7 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
                     }
                 }
                 Button {
-                    text: "Add path",
+                    label: "Add path",
                     kind: ButtonKind::Secondary,
                     on_click: move |_| async move {
                         on_create_path(()).await;
@@ -714,7 +714,7 @@ fn NavigationPathItem(
             }
             div { class: "grid grid-cols-2 gap-x-3 mt-2",
                 Button {
-                    text: "Add point",
+                    label: "Add point",
                     kind: ButtonKind::Secondary,
                     on_click: move |_| {
                         on_add_point(path.peek().clone());

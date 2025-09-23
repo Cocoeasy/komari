@@ -377,7 +377,7 @@ fn SectionRotation(
                 }
                 div {}
                 Button {
-                    text: "Update mobbing key",
+                    label: "Update mobbing key",
                     kind: ButtonKind::Primary,
                     disabled: disabled | update_mobbing_button_disabled(),
                     on_click: move |_| {
@@ -395,7 +395,7 @@ fn SectionRotation(
                     },
                 }
                 Button {
-                    text: "Update mobbing bound",
+                    label: "Update mobbing bound",
                     kind: ButtonKind::Primary,
                     disabled: disabled | update_mobbing_button_disabled(),
                     on_click: move |_| {
@@ -621,7 +621,7 @@ fn SectionPlatforms(
                 }
             }
             Button {
-                text: "Add platform",
+                label: "Add platform",
                 kind: ButtonKind::Secondary,
                 on_click: move |_| {
                     let kind = PopupInputKind::Platform(Platform::default(), None);
@@ -923,7 +923,7 @@ fn SectionActions(
                     a { id: export_element_id(), class: "w-0 h-0 invisible" }
                     Button {
                         class: "w-full",
-                        text: "Export",
+                        label: "Export",
                         kind: ButtonKind::Primary,
                         disabled,
                         on_click: move |_| {
@@ -946,7 +946,7 @@ fn SectionActions(
                     }
                     Button {
                         class: "w-full",
-                        text: "Import",
+                        label: "Import",
                         kind: ButtonKind::Primary,
                         disabled,
                         on_click: move |_| {
@@ -1244,7 +1244,7 @@ fn ActionInput(
         div { class: "flex-none grid auto-cols-auto grid-flow-col",
             if switchable {
                 Button {
-                    text: button_text(),
+                    label: button_text(),
                     kind: ButtonKind::Primary,
                     on_click: move |_| {
                         if discriminant(&value) != discriminant(&*action.peek()) {
@@ -1272,7 +1272,7 @@ fn ActionInput(
             }
             if copyable {
                 Button {
-                    text: "Copy",
+                    label: "Copy",
                     kind: ButtonKind::Primary,
                     on_click: on_copy,
                     class: "label border-b border-gray-600",
@@ -1407,7 +1407,7 @@ fn ActionMoveInput(
         div { class: "flex w-full gap-3 absolute bottom-2",
             Button {
                 class: "flex-grow border border-gray-600",
-                text: if modifying { "Save" } else { "Add" },
+                label: if modifying { "Save" } else { "Add" },
                 kind: ButtonKind::Primary,
                 on_click: move |_| {
                     on_value((*action.peek(), value.condition));
@@ -1415,7 +1415,7 @@ fn ActionMoveInput(
             }
             Button {
                 class: "flex-grow border border-gray-600",
-                text: "Cancel",
+                label: "Cancel",
                 kind: ButtonKind::Secondary,
                 on_click: move |_| {
                     on_cancel(());
@@ -1688,7 +1688,7 @@ fn ActionKeyInput(
         div { class: "flex w-full gap-3 absolute bottom-0 py-2 bg-gray-900",
             Button {
                 class: "flex-grow border border-gray-600",
-                text: if modifying { "Save" } else { "Add" },
+                label: if modifying { "Save" } else { "Add" },
                 kind: ButtonKind::Primary,
                 on_click: move |_| {
                     on_value((*action.peek(), value.condition));
@@ -1696,7 +1696,7 @@ fn ActionKeyInput(
             }
             Button {
                 class: "flex-grow border border-gray-600",
-                text: "Cancel",
+                label: "Cancel",
                 kind: ButtonKind::Secondary,
                 on_click: move |_| {
                     on_cancel(());
@@ -1791,7 +1791,7 @@ fn ActionList(
                 }
             }
             Button {
-                text: "Add action",
+                label: "Add action",
                 kind: ButtonKind::Secondary,
                 on_click: move |_| {
                     on_add_click(());

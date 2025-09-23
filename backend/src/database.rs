@@ -290,9 +290,9 @@ fn platform_add_key_default() -> KeyBindingConfiguration {
     Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumIter, Display, EnumString,
 )]
 pub enum CaptureMode {
-    #[default]
     BitBlt,
     #[strum(to_string = "Windows 10 (1903 and up)")] // Thanks OBS
+    #[default]
     WindowsGraphicsCapture,
     BitBltArea,
 }
