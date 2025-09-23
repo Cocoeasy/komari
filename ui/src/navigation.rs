@@ -53,34 +53,35 @@ pub fn Navigation() -> Element {
 // TODO: Should receive a `NavigationPath` directly
 #[component]
 fn PopupSnapshots(
-    name_base64: String,
-    minimap_base64: String,
-    minimap_use_grayscale: bool,
-    on_minimap_use_grayscale: EventHandler<bool>,
-    on_recapture: EventHandler,
+    value: NavigationPath,
+    on_minimap_use_grayscale: EventHandler<NavigationPath>,
+    on_recapture: EventHandler<NavigationPath>,
     on_cancel: EventHandler,
 ) -> Element {
-    let minimap_base64 = use_memo(move || minimap_base64.clone());
-    let mut minimap_base64_current = use_signal(&*minimap_base64);
+    let value = use_memo(use_reactive!(|value| value));
+    let mut minimap_base64_current = use_signal(|| value().minimap_snapshot_base64);
 
-    use_effect(use_reactive!(|minimap_use_grayscale| {
+    use_effect(move || {
+        let path = value();
+        let base64 = path.minimap_snapshot_base64;
+        let use_grayscale = path.minimap_snapshot_grayscale;
+
         spawn(async move {
-            let base64 = minimap_base64();
-            if minimap_use_grayscale {
+            if use_grayscale {
                 minimap_base64_current.set(navigation_snapshot_as_grayscale(base64).await);
             } else {
                 minimap_base64_current.set(base64);
             }
         });
-    }));
+    });
 
     rsx! {
         Popup {
             title: "Path snapshots",
             class: "max-w-108 min-h-70 max-h-80",
             confirm_button: "Re-capture",
-            on_confirm: move |_| {
-                on_recapture(());
+            on_confirm: move |_| async move {
+                on_recapture(recapture_navigation_path(value()).await);
             },
             cancel_button: "Cancel",
             on_cancel: move |_| {
@@ -89,21 +90,24 @@ fn PopupSnapshots(
             div { class: "flex flex-col gap-2 pr-2 overflow-y-auto scrollbar",
                 p { class: "paragraph-xs", "Name" }
                 img {
-                    src: format!("data:image/png;base64,{}", name_base64),
+                    src: format!("data:image/png;base64,{}", value().name_snapshot_base64),
                     class: "w-full h-full p-1 border border-gray-600",
                 }
                 p { class: "paragraph-xs", "Map" }
                 img {
-                    src: format!("data:image/png;base64,{}", minimap_base64_current),
+                    src: format!("data:image/png;base64,{}", value().minimap_snapshot_base64),
                     class: "w-full h-full p-1 border border-gray-600",
                 }
                 Checkbox {
                     label: "Use grayscale for map",
                     input_class: "w-6",
-                    on_value: move |checked| {
-                        on_minimap_use_grayscale(checked);
+                    on_value: move |minimap_snapshot_grayscale| {
+                        on_minimap_use_grayscale(NavigationPath {
+                            minimap_snapshot_grayscale,
+                            ..value()
+                        });
                     },
-                    value: minimap_use_grayscale,
+                    value: value().minimap_snapshot_grayscale,
                 }
             }
         }
@@ -347,10 +351,6 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
         popup.set(Some(NavigationPopup::Snapshots(path, path_index)));
         coroutine.send(NavigationUpdate::Update(paths));
     });
-    let on_popup_recapture = use_callback(move |(path, path_index)| async move {
-        let new_path = recapture_navigation_path(path).await;
-        on_popup_update((new_path, path_index));
-    });
     let on_popup_point = use_callback::<(NavigationPath, usize, PopupPointValue), _>(
         move |(mut path, path_index, point_value)| {
             let Some(mut paths) = selected_paths.peek().clone() else {
@@ -508,22 +508,12 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
                 NavigationPopup::Snapshots(path, path_index) => {
                     rsx! {
                         PopupSnapshots {
-                            name_base64: path.name_snapshot_base64.clone(),
-                            minimap_base64: path.minimap_snapshot_base64.clone(),
-                            minimap_use_grayscale: path.minimap_snapshot_grayscale,
-                            on_minimap_use_grayscale: {
-                                let path = path.clone();
-                                move |checked| {
-                                    let mut path = path.clone();
-                                    path.minimap_snapshot_grayscale = checked;
-                                    on_popup_update((path, path_index));
-                                }
+                            value: path,
+                            on_minimap_use_grayscale: move |path| {
+                                on_popup_update((path, path_index));
                             },
-                            on_recapture: move |_| {
-                                let path = path.clone();
-                                async move {
-                                    on_popup_recapture((path, path_index)).await;
-                                }
+                            on_recapture: move |path| {
+                                on_popup_update((path, path_index));
                             },
                             on_cancel: move |_| {
                                 popup.set(None);
@@ -550,8 +540,6 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
     }
 }
 
-// TODO: Whether to give a cloned path in the callbacks or let caller clone. NavigationPath
-//       does not implement Copy so it is kind of inconvenient right now.
 #[component]
 fn NavigationPathItem(
     path: NavigationPath,
