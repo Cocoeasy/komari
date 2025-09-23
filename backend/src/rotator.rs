@@ -1048,6 +1048,12 @@ fn buff_priority_action(buff: BuffKind, key: KeyBinding) -> PriorityAction {
                 BuffKind::ExpAccumulationPotion => {
                     skip_if_has_buff!(context, SmallExpAccumulationPotion)
                 }
+                BuffKind::ExpCouponX2 => {
+                    skip_if_has_buff!(context, ExpCouponX3)
+                }
+                BuffKind::ExpCouponX3 => {
+                    skip_if_has_buff!(context, ExpCouponX2)
+                }
                 _ => (),
             }
 

@@ -71,8 +71,9 @@ impl BuffState {
             BuffKind::Familiar => character.familiar_buff_key.enabled,
             BuffKind::SayramElixir => character.sayram_elixir_key.enabled,
             BuffKind::AureliaElixir => character.aurelia_elixir_key.enabled,
-            BuffKind::ExpCouponX2 => character.exp_x2_key.enabled,
-            BuffKind::ExpCouponX3 => character.exp_x3_key.enabled,
+            BuffKind::ExpCouponX2 | BuffKind::ExpCouponX3 => {
+                character.exp_x2_key.enabled || character.exp_x3_key.enabled
+            }
             BuffKind::BonusExpCoupon => character.bonus_exp_key.enabled,
             BuffKind::LegionWealth => character.legion_wealth_key.enabled,
             BuffKind::LegionLuck => character.legion_luck_key.enabled,
