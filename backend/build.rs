@@ -76,8 +76,7 @@ fn main() {
     let extreme_gold_potion_buff = dir.join("extreme_gold_potion_ideal_ratio.png");
 
     let hp_bar_anchor = dir.join("hp_bar_anchor_ideal_ratio.png");
-    let hp_separator_1 = dir.join("hp_separator_ideal_ratio_1.png");
-    let hp_separator_2 = dir.join("hp_separator_ideal_ratio_2.png");
+    let hp_separator = dir.join("hp_separator_ideal_ratio.png");
     let hp_shield = dir.join("hp_shield_ideal_ratio.png");
 
     let familiar_button_save = dir.join("familiar_button_save_ideal_ratio.png");
@@ -341,12 +340,8 @@ fn main() {
         hp_bar_anchor.to_str().unwrap()
     );
     println!(
-        "cargo:rustc-env=HP_SEPARATOR_1_TEMPLATE={}",
-        hp_separator_1.to_str().unwrap()
-    );
-    println!(
-        "cargo:rustc-env=HP_SEPARATOR_2_TEMPLATE={}",
-        hp_separator_2.to_str().unwrap()
+        "cargo:rustc-env=HP_SEPARATOR_TEMPLATE={}",
+        hp_separator.to_str().unwrap()
     );
     println!(
         "cargo:rustc-env=HP_SHIELD_TEMPLATE={}",

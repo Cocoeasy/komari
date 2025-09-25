@@ -3,10 +3,7 @@ use std::{
     collections::HashMap,
     env,
     fmt::Debug,
-    sync::{
-        Arc, LazyLock, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use anyhow::{Result, anyhow, bail};
@@ -1147,16 +1144,9 @@ fn detect_player_current_max_health_bars(
     hp_bar: Rect,
 ) -> Result<(Rect, Rect)> {
     /// TODO: Support default ratio
-    static HP_SEPARATOR_1: LazyLock<Mat> = LazyLock::new(|| {
+    static HP_SEPARATOR: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
-            include_bytes!(env!("HP_SEPARATOR_1_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-    static HP_SEPARATOR_2: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("HP_SEPARATOR_2_TEMPLATE")),
+            include_bytes!(env!("HP_SEPARATOR_TEMPLATE")),
             IMREAD_GRAYSCALE,
         )
         .unwrap()
@@ -1164,23 +1154,13 @@ fn detect_player_current_max_health_bars(
     static HP_SHIELD: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("HP_SHIELD_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
     });
-    static HP_SEPARATOR_TYPE_1: AtomicBool = AtomicBool::new(true);
 
-    let hp_separator_type_1 = HP_SEPARATOR_TYPE_1.load(Ordering::Relaxed);
-    let hp_separator_template = if hp_separator_type_1 {
-        &*HP_SEPARATOR_1
-    } else {
-        &*HP_SEPARATOR_2
-    };
     let hp_separator = detect_template(
         &grayscale.roi(hp_bar).unwrap(),
-        hp_separator_template,
+        &*HP_SEPARATOR,
         hp_bar.tl(),
         0.7,
-    )
-    .inspect_err(|_| {
-        HP_SEPARATOR_TYPE_1.store(!hp_separator_type_1, Ordering::Release);
-    })?;
+    )?;
 
     let hp_shield = detect_template(
         &grayscale.roi(hp_bar).unwrap(),
@@ -1203,14 +1183,12 @@ fn detect_player_current_max_health_bars(
         .into_iter()
         .min_by_key(|bbox| ((bbox.x + bbox.width) - hp_separator.x).abs())
         .ok_or(anyhow!("failed to detect current health bar"))?;
-    let left_bbox_x = hp_shield
-        .map(|bbox| bbox.x + bbox.width)
-        .unwrap_or(left_bbox.x); // When there is shield, skips past it
+    let left_bbox_x = hp_shield.map_or(left_bbox.x, |bbox| bbox.x + bbox.width); // When there is shield, skips past it
     let left_bbox = Rect::new(
         left_bbox_x,
-        left_bbox.y - 1, // Add some space so the bound is not too tight
-        hp_separator.x - left_bbox_x + 1, // Help thin character like '1' detectable
-        left_bbox.height + 2,
+        left_bbox.y,
+        hp_separator.x - left_bbox_x,
+        left_bbox.height,
     );
 
     let right = mat
@@ -2074,8 +2052,7 @@ fn detect_familiar_hover_level<T: ToInputArray + MatTraitConst>(mat: &T) -> Resu
     let level = mat.roi(level_bbox)?;
     Ok(
         detect_template_single(&level, &*TEMPLATE, &*TEMPLATE_MASK, Point::default(), 0.70)
-            .map(|_| FamiliarLevel::Level5)
-            .unwrap_or(FamiliarLevel::LevelOther),
+            .map_or(FamiliarLevel::LevelOther, |_| FamiliarLevel::Level5),
     )
 }
 
