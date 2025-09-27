@@ -2,25 +2,26 @@
 - [Concepts](#concepts)
   - [Map](#map)
   - [Movement](#movement)
+  - [Characters](#characters)
   - [Action](#action)
       - [Normal and priority](#normal-and-priority)
       - [Configuration](#configuration)
-  - [Linked Key & Linked Action](#linked-key-%26-linked-action)
+  - [Linked Key & Linked Action](#linked-key--linked-action)
   - [Rotation Modes](#rotation-modes)
     - [Auto-mobbing](#auto-mobbing)
     - [Ping Pong](#ping-pong)
   - [Platforms Pathing](#platforms-pathing)
   - [Navigation](#navigation)
-  - [Run/stop Cycle](#run%2Fstop-cycle)
+  - [Run/stop Cycle](#runstop-cycle)
   - [Capture Modes](#capture-modes)
   - [Familiars Swapping](#familiars-swapping)
   - [Panic Mode](#panic-mode)
   - [Elite Boss Spawns Behavior](#elite-boss-spawns-behavior)
-  - [Discord](#discord)
+  - [Control And Notifications](#control-and-notifications)
 - [Video guides](#video-guides)
 - [Showcase](#showcase)
   - [Rotation](#rotation)
-  - [Auto Mobbing & Platforms Pathing](#auto-mobbing-%26-platforms-pathing)
+  - [Auto Mobbing & Platforms Pathing](#auto-mobbing--platforms-pathing)
   - [Rune Solving](#rune-solving)
 
 ## Download
@@ -59,11 +60,22 @@ to change), the bot will walk instead of double jump.
   - `Buffs`: For automatic buffs configuration
   - `Fixed actions`: Actions that are shared across all maps, useful for buffs or one-time skills
   - `Others`: Other game-related configurations for the character
+    - `Potion Mode`: Configures the potion mode
+      - `EveryMillis`: Uses potion every `x` milliseconds
+      - `Percentage`: Uses potion when player's health is below a percentage
+    - `Disable teleport on fall`: Whether to disable teleport on fall for mage class
+    - `Disable walking`: Whether to disable the `Adjusting` state (e.g. making the bot to only double jumps when moving horizontally)
 
-For supported buffs in the configuration, the bot relies on detecting buffs on the top-right corner.
 From v0.12, `Rope lift` skill can now be disabled. If not provided, the bot will just try to up jump.
 
+For supported buffs in the configuration, the bot relies on detecting buffs on the top-right corner.
+
 ![Buffs](https://github.com/sasanquaa/komari/blob/master/.github/images/buffs.png?raw=true)
+
+(From v0.21) 
+If multiple buffs are enabled that maybe conflicting with one another (e.g. x2/x3 exp coupons, small wap/big wap, ...),
+the bot will try to stop buffing if one or the other is already buffed. This is currently just prevention and does not
+prioritize which buff to use first (e.g. uses x2 exp coupon first and then x3 exp coupon).
 
 #### Action
 There are two types of action:
@@ -95,7 +107,7 @@ Move action configurations:
 - `Y`: The vertical y position to move to
 - `Wait after move`: The milliseconds to wait after moving (e.g. for looting)
 - `Linked action`:
-  - See [linked action](#linked-key-%26-linked-action)
+  - See [linked action](#linked-key--linked-action)
   - Can only be enabled if it is not the first action or the action list is non-empty
 
 Key action configurations:
@@ -103,7 +115,7 @@ Key action configurations:
 - `X`, `X random range`, `Y`, `Adjust`, `Linked action`: Same as move action
 - `Key`: The key to use
 - `Use count`: Number of times to use the key
-- `Has link key`: Optionally enable link key (useful for [combo classes](#linked-key-%26-linked-action))
+- `Has link key`: Optionally enable link key (useful for [combo classes](#linked-key--linked-action))
 - `Queue to front`:
   - Applicable only to priority actions
   - When set, this action can override other non-`Queue to front` priority action
@@ -184,6 +196,13 @@ Red arrow's tail indicates current quad and its head indicates the next quad to 
 
 ![Auto-mobbing](https://github.com/sasanquaa/komari/blob/master/.github/images/automobbing.png?raw=true)
 
+(From v0.21.0)
+Added two new options `Auto mobbing uses key when pathing` and `Detect mobs when pathing every`:
+- Only works when player is pathing from one quad to another (e.g. when detection fails to find mob in the current quad so it moves to the next)
+- Uses mobbing key if the bot detects mobs facing in the same direction that the player is moving
+- Useful for larger maps where quads are far apart
+- Detects mobs interval when pathing can be configured
+
 ##### Ping Pong
 Added in v0.12:
 - All added normal actions are ignored but still possible to use other priority actions similar to `AutoMobbing`
@@ -233,7 +252,7 @@ Navigation paths can be created following this procedure:
 
 After following the above procedure, when clicking `Start`, the bot will try to navigate to the attached path first before 
 rotating the actual actions. Useful for:
-- Bot [run/stop Cycle](#run%2Fstop-cycle) that will stop, go town for a specified duration and start again
+- Bot [run/stop Cycle](#runstop-cycle) that will stop, go town for a specified duration and start again
 - Navigate back to the original map if accidental map changing occurs
 
 This system is currently experimental and subject to changes. Current limitations include:
@@ -241,6 +260,10 @@ This system is currently experimental and subject to changes. Current limitation
 - Cannot navigate to portal coordinates that make the bot goes into unstucking state
 
 ![Navigation](https://github.com/sasanquaa/komari/blob/master/.github/images/navigation.png?raw=true)
+
+(From v0.21)
+Added option `Use grayscale for map` so that the bot will try to use grayscale to match a minimap instead of color. This maybe 
+useful if the bot frequently fails trying to find the player current location using colored minimap.
 
 #### Run/stop Cycle
 (Added in v0.19)
@@ -306,16 +329,29 @@ Added `Elite boss spawns behavior` in `Characters` tab with two behavior types:
 - `CycleChannel`: Queues a channel change (`Panicking` state) action when an elite boss appears
 - `UseKey`: Uses a key when elite boss appears (e.g. useful for origin skill)
 
-#### Discord
+#### Control And Notifications
 (Added in v0.20 for Discord bot)
-The bot uses Discord's webhook and bot/application to enable notifications an remote monitoring. Follows Discord's guide
-to create a webhook URL or a bot/application access token and provides it to Komari's bot.
+The bot uses Discord's webhook and bot/application features to enable notifications and remote monitoring
+through slash commands. Follows Discord's official guide to create a webhook URL or a bot/application access token
+and provides it to Komari's bot in the `Settings` tab. Note that if only notifications are used, providing only the webhook URL is sufficient.
+
+For notifications, the following types are available with their names quite self-explainatory:
+- `Rune spawns`
+- `Elite boss spawns`
+- `Player dies`
+- `Guildie appears`
+- `Stranger appears`
+- `Friend appears`
+- `Detection fails or map changes`
+
+If `Discord ping user ID` is provided, the notification will also ping the user with the provided user ID.
 
 For Discord bot, the following commands are available:
 - `/status`: The bot current status, run duration and image
 - `/start`: Starts the bot
 - `/stop`: Stops the bot
   - `go-to-town`: Whether to go to town when stopping
+- `/suspend`: Stops the bot temporarily (stops completely if run/stop cycle is not used )
 - `/start-stream`: Streams the bot's status at regular interval for up to 15 minutes
 - `/stop-stream`: Stops the started stream
 - `/chat`: Performs an in-game chat (only supports partial ASCII characters and external chat disabled)
