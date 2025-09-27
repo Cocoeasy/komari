@@ -82,7 +82,6 @@ struct Point {
 enum PointState {
     Dirty,
     Completed,
-    NoDestination,
     Unreachable,
     Next(i32, i32, NavigationTransition, Option<Rc<RefCell<Path>>>),
 }
@@ -111,7 +110,8 @@ pub trait Navigator: Debug + 'static {
     /// When `invalidate_cache` is `true`, all paths will be retrieved again from database.
     fn mark_dirty(&mut self, invalidate_cache: bool);
 
-    /// Same as [`Self::mark_dirty`] but also sets the destination.
+    /// Same as [`Self::mark_dirty`] with `invalidate_cache` as `false` but also sets
+    /// the navigation destination.
     fn mark_dirty_with_destination(&mut self, paths_id_index: Option<(i64, usize)>);
 }
 
@@ -241,17 +241,9 @@ impl DefaultNavigator {
         // Re-use cached point
         if matches!(
             self.last_point_state,
-            Some(
-                PointState::Next(_, _, _, _)
-                    | PointState::Completed
-                    | PointState::Unreachable
-                    | PointState::NoDestination
-            )
+            Some(PointState::Next(_, _, _, _) | PointState::Completed | PointState::Unreachable)
         ) {
             return self.last_point_state.clone().expect("has value");
-        }
-        if self.destination_path_id.is_none() {
-            return PointState::NoDestination;
         }
 
         let path_id = self.destination_path_id.clone().expect("has value");
@@ -374,16 +366,13 @@ impl DefaultNavigator {
 }
 
 impl Navigator for DefaultNavigator {
-    /// Navigates the player to the currently set [`Self::destination_path_id`].
-    ///
-    /// Returns `true` if the player has reached the destination or operation is currently halting.
     fn navigate_player(&mut self, context: &Context, player: &mut PlayerState) -> bool {
-        let did_minimap_changed = self.did_minimap_changed();
-        self.update(context, did_minimap_changed);
-
-        if context.operation.halting() {
+        if self.destination_path_id.is_none() || context.operation.halting() {
             return true;
         }
+
+        let did_minimap_changed = self.did_minimap_changed();
+        self.update(context, did_minimap_changed);
 
         let next_point_state = self.compute_next_point();
         if !matches!(next_point_state, PointState::Dirty) {
@@ -398,7 +387,7 @@ impl Navigator for DefaultNavigator {
                 }
                 false
             }
-            PointState::NoDestination | PointState::Completed | PointState::Unreachable => true,
+            PointState::Completed | PointState::Unreachable => true,
             PointState::Next(x, y, transition, _) => {
                 match transition {
                     NavigationTransition::Portal => {
@@ -431,7 +420,6 @@ impl Navigator for DefaultNavigator {
         }
     }
 
-    /// Whether the last point to navigate to was available or the navigation is completed.
     #[inline]
     fn was_last_point_available_or_completed(&self) -> bool {
         matches!(
@@ -440,9 +428,6 @@ impl Navigator for DefaultNavigator {
         )
     }
 
-    /// Marks all paths computed as dirty and should be recomputed.
-    ///
-    /// When `invalidate_cache` is `true`, all paths will be retrieved again from database.
     #[inline]
     fn mark_dirty(&mut self, invalidate_cache: bool) {
         self.path_dirty = true;
@@ -454,7 +439,6 @@ impl Navigator for DefaultNavigator {
         }
     }
 
-    /// Same as [`Self::mark_dirty`] but also sets the destination.
     #[inline]
     fn mark_dirty_with_destination(&mut self, paths_id_index: Option<(i64, usize)>) {
         self.destination_path_id =
@@ -780,16 +764,6 @@ mod tests {
         let result = navigator.compute_next_point();
 
         assert!(matches!(result, PointState::Dirty));
-    }
-
-    #[test]
-    fn compute_next_point_when_no_destination_path() {
-        let mut navigator = DefaultNavigator::default();
-        navigator.path_dirty = false;
-
-        let result = navigator.compute_next_point();
-
-        assert!(matches!(result, PointState::NoDestination));
     }
 
     #[test]
