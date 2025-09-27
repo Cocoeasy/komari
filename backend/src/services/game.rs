@@ -354,7 +354,7 @@ fn actions_from(character: &Character) -> Vec<Action> {
             wait_after_use_millis: 350,
             ..ActionKey::default()
         });
-        for _ in 0..character.num_pets {
+        for _ in 0..character.feed_pet_count {
             vec.push(feed_pet_action);
         }
     }

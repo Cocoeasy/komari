@@ -694,16 +694,15 @@ fn SectionOthers(character_view: Memo<Character>, save_character: Callback<Chara
         Section { name: "Others",
             div { class: "grid grid-cols-[auto_auto_128px] gap-4",
                 CharactersNumberU32Input {
-                    label: "Number of Pets (1-3)",
+                    label: "Feed pet count",
                     disabled: character_view().id.is_none(),
-                    on_value: move |num_pets| {
+                    on_value: move |feed_pet_count| {
                         save_character(Character {
-                            num_pets,
+                            feed_pet_count,
                             ..character_view.peek().clone()
                         });
                     },
-                    maximum_value: Some(3),
-                    value: character_view().num_pets,
+                    value: character_view().feed_pet_count,
                 }
                 CharactersMillisInput {
                     label: "Feed pet every",
@@ -1006,13 +1005,11 @@ fn CharactersNumberU32Input(
     #[props(default = false)] disabled: bool,
     on_value: EventHandler<u32>,
     value: u32,
-    #[props(default = None)] maximum_value: Option<u32>,
 ) -> Element {
     rsx! {
         NumberInputU32 {
             label,
             minimum_value: 1,
-            maximum_value,
             disabled,
             on_value,
             value,

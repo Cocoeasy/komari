@@ -319,8 +319,8 @@ pub struct Character {
     pub change_channel_key: KeyBindingConfiguration,
     pub feed_pet_key: KeyBindingConfiguration,
     pub feed_pet_millis: u64,
-    #[serde(default = "num_pets_default")]
-    pub num_pets: u32,
+    #[serde(default = "feed_pet_count_default", alias = "num_pets")]
+    pub feed_pet_count: u32,
     pub potion_key: KeyBindingConfiguration,
     pub potion_mode: PotionMode,
     pub health_update_millis: u64,
@@ -360,7 +360,7 @@ pub struct Character {
     pub elite_boss_behavior_key: KeyBinding,
 }
 
-fn num_pets_default() -> u32 {
+fn feed_pet_count_default() -> u32 {
     3
 }
 
@@ -396,7 +396,7 @@ impl Default for Character {
             change_channel_key: key_default(),
             feed_pet_key: KeyBindingConfiguration::default(),
             feed_pet_millis: 320000,
-            num_pets: num_pets_default(),
+            feed_pet_count: feed_pet_count_default(),
             potion_key: KeyBindingConfiguration::default(),
             potion_mode: PotionMode::EveryMillis(180000),
             health_update_millis: 1000,
