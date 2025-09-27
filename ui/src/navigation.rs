@@ -54,15 +54,15 @@ pub fn Navigation() -> Element {
 #[component]
 fn PopupSnapshots(
     value: NavigationPath,
-    on_minimap_use_grayscale: EventHandler<NavigationPath>,
-    on_recapture: EventHandler<NavigationPath>,
+    on_save: EventHandler<NavigationPath>,
     on_cancel: EventHandler,
 ) -> Element {
-    let value = use_memo(use_reactive!(|value| value));
-    let mut minimap_base64_current = use_signal(|| value().minimap_snapshot_base64);
+    let mut path = use_signal(|| value.clone());
+    let mut minimap_base64_current = use_signal(|| path().minimap_snapshot_base64);
 
+    use_effect(use_reactive!(|value| { path.set(value) }));
     use_effect(move || {
-        let path = value();
+        let path = path();
         let base64 = path.minimap_snapshot_base64;
         let use_grayscale = path.minimap_snapshot_grayscale;
 
@@ -79,35 +79,44 @@ fn PopupSnapshots(
         Popup {
             title: "Path snapshots",
             class: "max-w-108 min-h-70 max-h-80",
-            confirm_button: "Re-capture",
+            confirm_button: "Save",
             on_confirm: move |_| async move {
-                on_recapture(recapture_navigation_path(value()).await);
+                on_save(path());
             },
             cancel_button: "Cancel",
             on_cancel: move |_| {
                 on_cancel(());
             },
             div { class: "flex flex-col gap-2 pr-2 overflow-y-auto scrollbar",
+                div {
+                    Button {
+                        label: "Re-capture",
+                        class: "w-full label border-b border-gray-600",
+                        kind: ButtonKind::Secondary,
+                        on_click: move |_| async move {
+                            path.set(recapture_navigation_path(path()).await);
+                        },
+                    }
+                }
                 p { class: "paragraph-xs", "Name" }
                 img {
-                    src: format!("data:image/png;base64,{}", value().name_snapshot_base64),
+                    src: format!("data:image/png;base64,{}", path().name_snapshot_base64),
                     class: "w-full h-full p-1 border border-gray-600",
                 }
                 p { class: "paragraph-xs", "Map" }
                 img {
-                    src: format!("data:image/png;base64,{}", value().minimap_snapshot_base64),
+                    src: format!("data:image/png;base64,{}", minimap_base64_current()),
                     class: "w-full h-full p-1 border border-gray-600",
                 }
                 Checkbox {
                     label: "Use grayscale for map",
                     input_class: "w-6",
                     on_value: move |minimap_snapshot_grayscale| {
-                        on_minimap_use_grayscale(NavigationPath {
-                            minimap_snapshot_grayscale,
-                            ..value()
-                        });
+                        path.with_mut(|path| {
+                            path.minimap_snapshot_grayscale = minimap_snapshot_grayscale;
+                        })
                     },
-                    value: value().minimap_snapshot_grayscale,
+                    value: path().minimap_snapshot_grayscale,
                 }
             }
         }
@@ -509,11 +518,9 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
                     rsx! {
                         PopupSnapshots {
                             value: path,
-                            on_minimap_use_grayscale: move |path| {
+                            on_save: move |path| {
                                 on_popup_update((path, path_index));
-                            },
-                            on_recapture: move |path| {
-                                on_popup_update((path, path_index));
+                                popup.set(None);
                             },
                             on_cancel: move |_| {
                                 popup.set(None);
