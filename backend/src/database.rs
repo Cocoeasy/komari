@@ -353,6 +353,8 @@ pub struct Character {
     pub disable_adjusting: bool,
     #[serde(default)]
     pub disable_teleport_on_fall: bool,
+    #[serde(default)]
+    pub up_jump_is_flight: bool,
     pub actions: Vec<ActionConfiguration>,
     #[serde(default, deserialize_with = "deserialize_with_ok_or_default")]
     pub elite_boss_behavior: EliteBossBehavior,
@@ -422,6 +424,7 @@ impl Default for Character {
             class: Class::default(),
             disable_adjusting: false,
             disable_teleport_on_fall: false,
+            up_jump_is_flight: false,
             actions: vec![],
             elite_boss_behavior_key: KeyBinding::default(),
             elite_boss_behavior: EliteBossBehavior::default(),

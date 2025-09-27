@@ -107,6 +107,8 @@ pub struct PlayerConfiguration {
     ///
     /// Only uses for determine linked key/action timing.
     pub class: Class,
+    /// Whether up jump requires helding down the key for flight.
+    pub up_jump_is_flight: bool,
     /// Whether to disable [`Player::Adjusting`].
     pub disable_adjusting: bool,
     /// Whether to disable teleportation in [`Player::Falling`].
@@ -159,28 +161,29 @@ pub struct PlayerConfiguration {
 impl Default for PlayerConfiguration {
     fn default() -> Self {
         Self {
-            class: Default::default(),
-            disable_adjusting: Default::default(),
-            disable_teleport_on_fall: Default::default(),
-            rune_platforms_pathing: Default::default(),
-            rune_platforms_pathing_up_jump_only: Default::default(),
-            auto_mob_platforms_pathing: Default::default(),
-            auto_mob_platforms_pathing_up_jump_only: Default::default(),
-            auto_mob_platforms_bound: Default::default(),
+            class: Class::default(),
+            disable_adjusting: false,
+            disable_teleport_on_fall: false,
+            up_jump_is_flight: false,
+            rune_platforms_pathing: false,
+            rune_platforms_pathing_up_jump_only: false,
+            auto_mob_platforms_pathing: false,
+            auto_mob_platforms_pathing_up_jump_only: false,
+            auto_mob_platforms_bound: false,
             auto_mob_use_key_when_pathing: false,
             auto_mob_use_key_when_pathing_update_millis: 0,
             interact_key: KeyKind::A,
-            grappling_key: Default::default(),
-            teleport_key: Default::default(),
+            grappling_key: None,
+            teleport_key: None,
             jump_key: KeyKind::A,
-            upjump_key: Default::default(),
+            upjump_key: None,
             cash_shop_key: KeyKind::A,
             familiar_key: KeyKind::A,
             to_town_key: KeyKind::A,
             change_channel_key: KeyKind::A,
             potion_key: KeyKind::A,
-            use_potion_below_percent: Default::default(),
-            update_health_millis: Default::default(),
+            use_potion_below_percent: None,
+            update_health_millis: None,
         }
     }
 }

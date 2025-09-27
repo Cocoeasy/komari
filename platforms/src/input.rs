@@ -149,9 +149,12 @@ impl Input {
     }
 
     /// Holds down key `kind`.
-    pub fn send_key_down(&self, kind: KeyKind) -> Result<()> {
+    ///
+    /// If `repeatable` is `true`, consecutive calls will continue to send the down stroke even if
+    /// the key is already down.
+    pub fn send_key_down(&self, kind: KeyKind, repeatable: bool) -> Result<()> {
         if cfg!(windows) {
-            return self.windows.send_key_down(kind);
+            return self.windows.send_key_down(kind, repeatable);
         }
 
         Ok(())

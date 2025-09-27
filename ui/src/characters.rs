@@ -808,6 +808,19 @@ fn SectionOthers(character_view: Memo<Character>, save_character: Callback<Chara
                     },
                     selected: character_view().class,
                 }
+                div {}
+                div {}
+                CharactersCheckbox {
+                    label: "Up jump is flight",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |up_jump_is_flight| {
+                        save_character(Character {
+                            up_jump_is_flight,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().up_jump_is_flight,
+                }
                 CharactersCheckbox {
                     label: "Disable teleport on fall",
                     disabled: character_view().id.is_none(),

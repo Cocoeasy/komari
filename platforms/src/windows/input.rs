@@ -119,6 +119,13 @@ impl WindowsInputReceiver {
 }
 
 #[derive(Debug)]
+enum InputKeyStroke {
+    Up,
+    Down,
+    DownRepeatable,
+}
+
+#[derive(Debug)]
 pub struct WindowsInput {
     handle: HandleCell,
     input_kind: InputKind,
@@ -189,25 +196,36 @@ impl WindowsInput {
     }
 
     pub fn send_key(&self, kind: KeyKind) -> Result<()> {
-        self.send_key_down(kind)?;
+        self.send_key_down(kind, false)?;
         self.send_key_up(kind)?;
         Ok(())
     }
 
     pub fn send_key_up(&self, kind: KeyKind) -> Result<()> {
-        self.send_input(kind, false)
+        self.send_input(kind, InputKeyStroke::Up)
     }
 
-    pub fn send_key_down(&self, kind: KeyKind) -> Result<()> {
-        self.send_input(kind, true)
+    pub fn send_key_down(&self, kind: KeyKind, repeatable: bool) -> Result<()> {
+        let stroke = if repeatable {
+            InputKeyStroke::DownRepeatable
+        } else {
+            InputKeyStroke::Down
+        };
+
+        self.send_input(kind, stroke)
     }
 
     #[inline]
-    fn send_input(&self, kind: KeyKind, is_down: bool) -> Result<()> {
+    fn send_input(&self, kind: KeyKind, stroke: InputKeyStroke) -> Result<()> {
         let handle = self.get_handle()?;
+        let is_down = matches!(
+            stroke,
+            InputKeyStroke::Down | InputKeyStroke::DownRepeatable
+        );
         if is_down && !is_foreground(handle, self.input_kind) {
             return Err(Error::KeyNotSent);
         }
+
         let key = kind.into();
         let (scan_code, is_extended) = to_scan_code(key);
         let mut key_down = self.key_down.borrow_mut();
@@ -215,7 +233,12 @@ impl WindowsInput {
         // was initialized with 256 elements
         let was_key_down = unsafe { key_down.get_unchecked(key.0 as usize) };
         match (is_down, was_key_down) {
-            (true, true) | (false, false) => return Err(Error::KeyNotSent),
+            (true, true) => {
+                if !matches!(stroke, InputKeyStroke::DownRepeatable) {
+                    return Err(Error::KeyNotSent);
+                }
+            }
+            (false, false) => return Err(Error::KeyNotSent),
             _ => {
                 key_down.set(key.0 as usize, is_down);
             }

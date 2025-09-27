@@ -523,6 +523,22 @@ impl InputReceiver for DefaultInputReceiver {
     }
 }
 
+/// Options for key down input.
+#[derive(Debug, Default)]
+pub struct InputKeyDownOptions {
+    /// Whether the down stroke can be repeated even if the key is already down.
+    ///
+    /// Currently supports only [`InputMethod::Default`].
+    repeatable: bool,
+}
+
+impl InputKeyDownOptions {
+    pub fn repeatable(mut self) -> InputKeyDownOptions {
+        self.repeatable = true;
+        self
+    }
+}
+
 /// Input method to use.
 ///
 /// This is a bridge enum between platform-specific and gRPC input options.
@@ -570,7 +586,15 @@ pub trait Input: Debug {
     fn send_key_up(&self, kind: KeyKind) -> Result<()>;
 
     /// Holds down key `kind`.
-    fn send_key_down(&self, kind: KeyKind) -> Result<()>;
+    ///
+    /// This key stroke is sent with the default options.
+    fn send_key_down(&self, kind: KeyKind) -> Result<()> {
+        self.send_key_down_with_options(kind, InputKeyDownOptions::default())
+    }
+
+    /// Same as [`Self::send_key_down`] but with the provided `options`.
+    fn send_key_down_with_options(&self, kind: KeyKind, options: InputKeyDownOptions)
+    -> Result<()>;
 
     /// Whether all keys are cleared.
     fn all_keys_cleared(&self) -> bool;
@@ -620,7 +644,7 @@ impl DefaultInput {
             }
             InputMethodInner::Default(input) => match self.track_input_delay(kind) {
                 InputDelay::Untracked => input.send_key(kind.into())?,
-                InputDelay::Tracked => input.send_key_down(kind.into())?,
+                InputDelay::Tracked => input.send_key_down(kind.into(), false)?,
                 InputDelay::AlreadyTracked => (),
             },
         }
@@ -647,8 +671,11 @@ impl DefaultInput {
     }
 
     #[inline]
-    fn send_key_down_inner(&self, kind: KeyKind) -> Result<()> {
+    fn send_key_down_inner(&self, kind: KeyKind, repeatable: bool) -> Result<()> {
         match &self.kind {
+            // NOTE: For unknown reason, hardware custom input (e.g. KMBox, Arduino) seems to only
+            // require sending down stroke once and it will continue correctly. But `SendInput`
+            // requires repeatedly sending the stroke to simulate flying for some classes.
             InputMethodInner::Rpc(_, service) => {
                 if let Some(cell) = service {
                     cell.borrow_mut().send_key_down(kind.into())?;
@@ -656,7 +683,7 @@ impl DefaultInput {
             }
             InputMethodInner::Default(input) => {
                 if !self.has_input_delay(kind) {
-                    input.send_key_down(kind.into())?;
+                    input.send_key_down(kind.into(), repeatable)?;
                 }
             }
         }
@@ -789,8 +816,12 @@ impl Input for DefaultInput {
         self.send_key_up_inner(kind, false)
     }
 
-    fn send_key_down(&self, kind: KeyKind) -> Result<()> {
-        self.send_key_down_inner(kind)
+    fn send_key_down_with_options(
+        &self,
+        kind: KeyKind,
+        options: InputKeyDownOptions,
+    ) -> Result<()> {
+        self.send_key_down_inner(kind, options.repeatable)
     }
 
     #[inline]

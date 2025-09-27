@@ -40,6 +40,7 @@ impl CharacterService for DefaultCharacterService {
             state.config.class = character.class;
             state.config.disable_adjusting = character.disable_adjusting;
             state.config.disable_teleport_on_fall = character.disable_teleport_on_fall;
+            state.config.up_jump_is_flight = character.up_jump_is_flight;
             state.config.interact_key = character.interact_key.key.into();
             state.config.grappling_key = character.ropelift_key.map(|key| key.key.into());
             state.config.teleport_key = character.teleport_key.map(|key| key.key.into());
@@ -70,6 +71,7 @@ mod tests {
             class: Class::Cadena,
             disable_adjusting: true,
             disable_teleport_on_fall: true,
+            up_jump_is_flight: true,
             interact_key: KeyBindingConfiguration {
                 key: KeyBinding::Z,
                 ..Default::default()
@@ -153,6 +155,7 @@ mod tests {
             state.config.disable_teleport_on_fall,
             character.disable_teleport_on_fall
         );
+        assert_eq!(state.config.up_jump_is_flight, character.up_jump_is_flight);
         assert_eq!(state.config.interact_key, KeyKind::Z);
         assert_eq!(state.config.grappling_key, Some(KeyKind::V));
         assert_eq!(state.config.teleport_key, Some(KeyKind::X));

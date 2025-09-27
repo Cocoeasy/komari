@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     ActionKeyWith,
-    bridge::KeyKind,
+    bridge::{InputKeyDownOptions, KeyKind},
     context::Context,
     minimap::Minimap,
     player::{
@@ -45,8 +45,14 @@ const SOFT_UP_JUMP_THRESHOLD: i32 = 16;
 
 #[derive(Debug, Clone, Copy)]
 struct Mage {
-    did_up_jump: bool,
-    teleport_after_up_jump: bool,
+    update_stage: MageUpJumpingStage,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MageUpJumpingStage {
+    Teleporting,
+    UpJumping,
+    Flying,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -108,6 +114,7 @@ pub fn update_up_jumping_context(
 ) -> Player {
     let up_jump_key = state.config.upjump_key;
     let jump_key = state.config.jump_key;
+    let is_flight = state.config.up_jump_is_flight;
 
     match next_moving_lifecycle_with_axis(
         up_jumping.moving,
@@ -134,10 +141,20 @@ pub fn update_up_jumping_context(
             match &mut up_jumping.kind {
                 UpJumpingKind::Mage(mage) => {
                     let (y_distance, _) = moving.y_distance_direction_from(true, moving.pos);
-                    mage.teleport_after_up_jump = y_distance >= UP_JUMP_AND_TELEPORT_THRESHOLD;
+                    let teleport_after_up_jump =
+                        !is_flight && y_distance >= UP_JUMP_AND_TELEPORT_THRESHOLD;
+                    mage.update_stage = if is_flight {
+                        MageUpJumpingStage::Flying
+                    } else if teleport_after_up_jump {
+                        MageUpJumpingStage::UpJumping
+                    } else {
+                        MageUpJumpingStage::Teleporting
+                    };
 
                     let _ = context.input.send_key_down(KeyKind::Up);
-                    if y_distance >= TELEPORT_WITH_JUMP_THRESHOLD && up_jump_key.is_none() {
+                    let can_jump =
+                        y_distance >= TELEPORT_WITH_JUMP_THRESHOLD && up_jump_key.is_none();
+                    if is_flight || can_jump {
                         let _ = context.input.send_key(jump_key);
                     }
                 }
@@ -150,6 +167,9 @@ pub fn update_up_jumping_context(
                 }
                 UpJumpingKind::SpecificKey => {
                     let _ = context.input.send_key_down(KeyKind::Up);
+                    if is_flight {
+                        let _ = context.input.send_key(jump_key);
+                    }
                 }
             }
 
@@ -163,45 +183,14 @@ pub fn update_up_jumping_context(
             let cur_pos = moving.pos;
             let (y_distance, y_direction) = moving.y_distance_direction_from(true, moving.pos);
 
-            if !moving.completed {
-                match &mut up_jumping.kind {
-                    UpJumpingKind::Mage(mage) => {
-                        update_mage_up_jump(
-                            context,
-                            state,
-                            &mut moving,
-                            mage,
-                            up_jumping.spam_delay,
-                            y_distance,
-                        );
-                    }
-                    UpJumpingKind::UpArrow | UpJumpingKind::JumpKey => {
-                        if state.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
-                            // Spam jump/up arrow key until the player y changes
-                            // above a threshold as sending jump key twice
-                            // doesn't work.
-                            if moving.timeout.total >= up_jumping.spam_delay {
-                                if matches!(up_jumping.kind, UpJumpingKind::UpArrow) {
-                                    let _ = context.input.send_key(KeyKind::Up);
-                                } else {
-                                    let _ = context.input.send_key(jump_key);
-                                }
-                            }
-                        } else {
-                            moving = moving.completed(true);
-                        }
-                    }
-                    UpJumpingKind::SpecificKey => {
-                        let _ = context
-                            .input
-                            .send_key(up_jump_key.expect("has up jump key"));
-                        moving = moving.completed(true);
-                    }
-                }
-            } else {
-                let _ = context.input.send_key_up(KeyKind::Up);
-            }
-
+            update_up_jump(
+                context,
+                state,
+                &mut moving,
+                &mut up_jumping,
+                y_distance,
+                y_direction,
+            );
             on_action(
                 state,
                 |action| match action {
@@ -267,6 +256,69 @@ pub fn update_up_jumping_context(
     }
 }
 
+fn update_up_jump(
+    context: &Context,
+    state: &mut PlayerState,
+    moving: &mut Moving,
+    up_jumping: &mut UpJumping,
+    y_distance: i32,
+    y_direction: i32,
+) {
+    let jump_key = state.config.jump_key;
+    let up_jump_key = state.config.upjump_key;
+    let is_flight = state.config.up_jump_is_flight;
+
+    if moving.completed {
+        let _ = context.input.send_key_up(KeyKind::Up);
+        return;
+    }
+
+    match &mut up_jumping.kind {
+        UpJumpingKind::Mage(mage) => {
+            update_mage_up_jump(
+                context,
+                state,
+                moving,
+                mage,
+                up_jumping.spam_delay,
+                y_distance,
+                y_direction,
+            );
+        }
+        UpJumpingKind::UpArrow | UpJumpingKind::JumpKey => {
+            if state.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
+                // Spam jump/up arrow key until the player y changes
+                // above a threshold as sending jump key twice
+                // doesn't work.
+                if moving.timeout.total >= up_jumping.spam_delay {
+                    if matches!(up_jumping.kind, UpJumpingKind::UpArrow) {
+                        let _ = context.input.send_key(KeyKind::Up);
+                    } else {
+                        let _ = context.input.send_key(jump_key);
+                    }
+                }
+            } else {
+                *moving = moving.completed(true);
+            }
+        }
+        UpJumpingKind::SpecificKey => {
+            if !is_flight {
+                let _ = context
+                    .input
+                    .send_key(up_jump_key.expect("has up jump key"));
+                *moving = moving.completed(true);
+            } else {
+                update_flying(
+                    context,
+                    moving,
+                    y_direction,
+                    up_jump_key.expect("has up jump key"),
+                );
+            }
+        }
+    }
+}
+
 fn update_mage_up_jump(
     context: &Context,
     state: &PlayerState,
@@ -274,35 +326,52 @@ fn update_mage_up_jump(
     mage: &mut Mage,
     spam_delay: u32,
     y_distance: i32,
+    y_direction: i32,
 ) {
     let jump_key = state.config.jump_key;
     let up_jump_key = state.config.upjump_key;
     let teleport_key = state.config.teleport_key.expect("has teleport key");
 
-    if y_distance < TELEPORT_WITH_JUMP_THRESHOLD {
-        let _ = context.input.send_key(teleport_key);
-        moving.completed = true;
-        return;
-    }
-
-    if !mage.teleport_after_up_jump || mage.did_up_jump {
-        return;
-    }
-
-    match up_jump_key {
-        Some(key) => {
-            let _ = context.input.send_key(key);
-            mage.did_up_jump = true;
-        }
-        None => {
-            if state.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
-                if moving.timeout.total >= spam_delay {
-                    let _ = context.input.send_key(jump_key);
-                }
-            } else {
-                mage.did_up_jump = true;
+    match mage.update_stage {
+        MageUpJumpingStage::Teleporting => {
+            if y_direction > 0 && y_distance < TELEPORT_WITH_JUMP_THRESHOLD {
+                let _ = context.input.send_key(teleport_key);
+                *moving = moving.completed(true);
             }
         }
+        MageUpJumpingStage::UpJumping => match up_jump_key {
+            Some(key) => {
+                let _ = context.input.send_key(key);
+                mage.update_stage = MageUpJumpingStage::Teleporting;
+            }
+            None => {
+                if state.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
+                    if moving.timeout.total >= spam_delay {
+                        let _ = context.input.send_key(jump_key);
+                    }
+                } else {
+                    mage.update_stage = MageUpJumpingStage::Teleporting;
+                }
+            }
+        },
+        MageUpJumpingStage::Flying => update_flying(
+            context,
+            moving,
+            y_direction,
+            up_jump_key.unwrap_or(teleport_key),
+        ),
+    }
+}
+
+#[inline]
+fn update_flying(context: &Context, moving: &mut Moving, y_direction: i32, key: KeyKind) {
+    if y_direction > 0 {
+        let _ = context
+            .input
+            .send_key_down_with_options(key, InputKeyDownOptions::default().repeatable());
+    } else {
+        let _ = context.input.send_key_up(key);
+        *moving = moving.completed(true);
     }
 }
 
@@ -310,8 +379,7 @@ fn update_mage_up_jump(
 fn up_jumping_kind(up_jump_key: Option<KeyKind>, has_teleport_key: bool) -> UpJumpingKind {
     match (up_jump_key, has_teleport_key) {
         (Some(_), true) | (None, true) => UpJumpingKind::Mage(Mage {
-            teleport_after_up_jump: false,
-            did_up_jump: false,
+            update_stage: MageUpJumpingStage::Teleporting, // Overwrite later
         }),
         (Some(KeyKind::Up), false) => UpJumpingKind::UpArrow,
         (None, false) => UpJumpingKind::JumpKey,
@@ -319,6 +387,7 @@ fn up_jumping_kind(up_jump_key: Option<KeyKind>, has_teleport_key: bool) -> UpJu
     }
 }
 
+// TODO: Update tests
 #[cfg(test)]
 mod tests {
     use std::assert_matches::assert_matches;
