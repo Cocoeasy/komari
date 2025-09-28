@@ -20,11 +20,11 @@ use tokio::sync::broadcast::Receiver;
 
 use crate::{
     ActionKeyDirection, ActionKeyWith, KeyBinding, NavigationPaths, Position,
-    context::{Context, ContextEvent},
     database::{NavigationPath, NavigationTransition, query_navigation_paths},
     detect::Detector,
+    ecs::{Resources, WorldEvent},
     minimap::Minimap,
-    player::{Key, PlayerAction, PlayerState},
+    player::{Key, PlayerAction, PlayerContext},
 };
 
 /// A data source to query [`NavigationPath`].
@@ -100,7 +100,12 @@ pub trait Navigator: Debug + 'static {
     /// Navigates the player to the currently set [`Self::destination_path_id`].
     ///
     /// Returns `true` if the player has reached the destination.
-    fn navigate_player(&mut self, context: &Context, player: &mut PlayerState) -> bool;
+    fn navigate_player(
+        &mut self,
+        resources: &Resources,
+        player_context: &mut PlayerContext,
+        minimap_state: Minimap,
+    ) -> bool;
 
     /// Whether the last point to navigate to was available or the navigation is completed.
     fn was_last_point_available_or_completed(&self) -> bool;
@@ -136,16 +141,16 @@ pub struct DefaultNavigator {
     /// Cached next point navigation computation.
     last_point_state: Option<PointState>,
     destination_path_id: Option<String>,
-    event_receiver: Receiver<ContextEvent>,
+    event_receiver: Receiver<WorldEvent>,
 }
 
 impl DefaultNavigator {
-    pub fn new(event_receiver: Receiver<ContextEvent>) -> Self {
+    pub fn new(event_receiver: Receiver<WorldEvent>) -> Self {
         Self::new_with_source(event_receiver, DefaultNavigatorDataSource)
     }
 
     fn new_with_source(
-        event_receiver: Receiver<ContextEvent>,
+        event_receiver: Receiver<WorldEvent>,
         source: impl NavigatorDataSource,
     ) -> Self {
         Self {
@@ -162,7 +167,7 @@ impl DefaultNavigator {
     }
 
     #[inline]
-    fn update(&mut self, context: &Context, did_minimap_changed: bool) {
+    fn update(&mut self, resources: &Resources, minimap_state: Minimap, did_minimap_changed: bool) {
         const UPDATE_RETRY_MAX_COUNT: u32 = 3;
 
         if did_minimap_changed {
@@ -171,7 +176,7 @@ impl DefaultNavigator {
             self.mark_dirty(false);
         }
         if self.path_dirty {
-            match self.update_current_path_from_current_location(context) {
+            match self.update_current_path_from_current_location(resources, minimap_state) {
                 UpdateState::Pending => (),
                 UpdateState::Completed => self.path_dirty = false,
                 UpdateState::NoMatch => {
@@ -265,10 +270,14 @@ impl DefaultNavigator {
     }
 
     // TODO: Do this on background thread?
-    fn update_current_path_from_current_location(&mut self, context: &Context) -> UpdateState {
+    fn update_current_path_from_current_location(
+        &mut self,
+        resources: &Resources,
+        minimap_state: Minimap,
+    ) -> UpdateState {
         const UPDATE_INTERVAL_SECS: u64 = 2;
 
-        let minimap_bbox = match context.minimap {
+        let minimap_bbox = match minimap_state {
             Minimap::Idle(idle) => idle.bbox,
             Minimap::Detecting => return UpdateState::Pending,
         };
@@ -279,7 +288,7 @@ impl DefaultNavigator {
         self.path_last_update = instant;
         debug!(target: "navigator", "updating current path from current location...");
 
-        let detector = context
+        let detector = resources
             .detector
             .as_ref()
             .expect("detector must available because minimap is idle")
@@ -360,19 +369,24 @@ impl DefaultNavigator {
     fn did_minimap_changed(&mut self) -> bool {
         matches!(
             self.event_receiver.try_recv().ok(),
-            Some(ContextEvent::MinimapChanged)
+            Some(WorldEvent::MinimapChanged)
         )
     }
 }
 
 impl Navigator for DefaultNavigator {
-    fn navigate_player(&mut self, context: &Context, player: &mut PlayerState) -> bool {
-        if self.destination_path_id.is_none() || context.operation.halting() {
+    fn navigate_player(
+        &mut self,
+        resources: &Resources,
+        player_context: &mut PlayerContext,
+        minimap_state: Minimap,
+    ) -> bool {
+        if self.destination_path_id.is_none() || resources.operation.halting() {
             return true;
         }
 
         let did_minimap_changed = self.did_minimap_changed();
-        self.update(context, did_minimap_changed);
+        self.update(resources, minimap_state, did_minimap_changed);
 
         let next_point_state = self.compute_next_point();
         if !matches!(next_point_state, PointState::Dirty) {
@@ -383,7 +397,7 @@ impl Navigator for DefaultNavigator {
         match next_point_state {
             PointState::Dirty => {
                 if did_minimap_changed {
-                    player.take_priority_action();
+                    player_context.take_priority_action();
                 }
                 false
             }
@@ -391,7 +405,7 @@ impl Navigator for DefaultNavigator {
             PointState::Next(x, y, transition, _) => {
                 match transition {
                     NavigationTransition::Portal => {
-                        if !player.has_priority_action() {
+                        if !player_context.has_priority_action() {
                             let position = Position {
                                 x,
                                 y,
@@ -410,7 +424,7 @@ impl Navigator for DefaultNavigator {
                                 wait_after_use_ticks: 0,
                                 wait_after_use_ticks_random_range: 0,
                             };
-                            player.set_priority_action(None, PlayerAction::Key(key));
+                            player_context.set_priority_action(None, PlayerAction::Key(key));
                         }
                     }
                 }
@@ -626,7 +640,7 @@ mod tests {
 
     impl Default for DefaultNavigator {
         fn default() -> Self {
-            let (_tx, rx) = channel::<ContextEvent>(1);
+            let (_tx, rx) = channel::<WorldEvent>(1);
             Self::new_with_source(rx, DefaultNavigatorDataSource)
         }
     }
@@ -857,10 +871,9 @@ mod tests {
             .expect_detect_minimap_match()
             .returning(|_, _, _, _, _| Ok(0.75)); // Simulate successful match
 
+        let resources = Resources::new(None, Some(mock_detector));
         let mut minimap = MinimapIdle::default();
         minimap.bbox = minimap_bbox;
-        let mut context = Context::new(None, Some(mock_detector));
-        context.minimap = Minimap::Idle(minimap);
 
         let point = NavigationPoint {
             next_paths_id_index: None,
@@ -881,13 +894,14 @@ mod tests {
             .expect_query_paths()
             .returning(move || Ok(vec![mock_paths.clone()]));
 
-        let (_tx, rx) = channel::<ContextEvent>(1);
+        let (_tx, rx) = channel::<WorldEvent>(1);
         let mut navigator = DefaultNavigator::new_with_source(rx, mock_source);
 
         // Force update
         navigator.path_last_update = Instant::now() - std::time::Duration::from_secs(10);
 
-        let result = navigator.update_current_path_from_current_location(&context);
+        let result =
+            navigator.update_current_path_from_current_location(&resources, Minimap::Idle(minimap));
 
         assert_matches!(result, UpdateState::Completed);
         assert!(navigator.current_path.is_some());

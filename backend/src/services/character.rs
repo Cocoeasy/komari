@@ -3,7 +3,7 @@ use std::fmt::Debug;
 #[cfg(test)]
 use mockall::automock;
 
-use crate::{Character, PotionMode, player::PlayerState};
+use crate::{Character, PotionMode, player::PlayerContext};
 
 /// A service to handle character-related incoming requests.
 #[cfg_attr(test, automock)]
@@ -15,8 +15,8 @@ pub trait CharacterService: Debug {
     /// Sets a new `character` to be used.
     fn set_character(&mut self, character: Option<Character>);
 
-    /// Updates `state` with information from the currently in use `[Character]`.
-    fn update(&self, state: &mut PlayerState);
+    /// Updates `player_context` with information from the currently in use `[Character]`.
+    fn update(&self, player_context: &mut PlayerContext);
 }
 
 #[derive(Debug, Default)]
@@ -34,29 +34,29 @@ impl CharacterService for DefaultCharacterService {
     }
 
     /// Updates `state` from currently using `[Character]`.
-    fn update(&self, state: &mut PlayerState) {
-        state.reset();
+    fn update(&self, player_context: &mut PlayerContext) {
+        player_context.reset();
         if let Some(character) = self.character.as_ref() {
-            state.config.class = character.class;
-            state.config.disable_adjusting = character.disable_adjusting;
-            state.config.disable_teleport_on_fall = character.disable_teleport_on_fall;
-            state.config.up_jump_is_flight = character.up_jump_is_flight;
-            state.config.interact_key = character.interact_key.key.into();
-            state.config.grappling_key = character.ropelift_key.map(|key| key.key.into());
-            state.config.teleport_key = character.teleport_key.map(|key| key.key.into());
-            state.config.jump_key = character.jump_key.key.into();
-            state.config.upjump_key = character.up_jump_key.map(|key| key.key.into());
-            state.config.cash_shop_key = character.cash_shop_key.key.into();
-            state.config.familiar_key = character.familiar_menu_key.key.into();
-            state.config.to_town_key = character.to_town_key.key.into();
-            state.config.change_channel_key = character.change_channel_key.key.into();
-            state.config.potion_key = character.potion_key.key.into();
-            state.config.use_potion_below_percent =
+            player_context.config.class = character.class;
+            player_context.config.disable_adjusting = character.disable_adjusting;
+            player_context.config.disable_teleport_on_fall = character.disable_teleport_on_fall;
+            player_context.config.up_jump_is_flight = character.up_jump_is_flight;
+            player_context.config.interact_key = character.interact_key.key.into();
+            player_context.config.grappling_key = character.ropelift_key.map(|key| key.key.into());
+            player_context.config.teleport_key = character.teleport_key.map(|key| key.key.into());
+            player_context.config.jump_key = character.jump_key.key.into();
+            player_context.config.upjump_key = character.up_jump_key.map(|key| key.key.into());
+            player_context.config.cash_shop_key = character.cash_shop_key.key.into();
+            player_context.config.familiar_key = character.familiar_menu_key.key.into();
+            player_context.config.to_town_key = character.to_town_key.key.into();
+            player_context.config.change_channel_key = character.change_channel_key.key.into();
+            player_context.config.potion_key = character.potion_key.key.into();
+            player_context.config.use_potion_below_percent =
                 match (character.potion_key.enabled, character.potion_mode) {
                     (false, _) | (_, PotionMode::EveryMillis(_)) => None,
                     (_, PotionMode::Percentage(percent)) => Some(percent / 100.0),
                 };
-            state.config.update_health_millis = Some(character.health_update_millis);
+            player_context.config.update_health_millis = Some(character.health_update_millis);
         }
     }
 }
@@ -64,7 +64,9 @@ impl CharacterService for DefaultCharacterService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Class, KeyBinding, KeyBindingConfiguration, bridge::KeyKind, player::PlayerState};
+    use crate::{
+        Class, KeyBinding, KeyBindingConfiguration, bridge::KeyKind, player::PlayerContext,
+    };
 
     fn mock_character() -> Character {
         Character {
@@ -133,7 +135,7 @@ mod tests {
     #[test]
     fn update_from_character_none() {
         let service = DefaultCharacterService::default();
-        let mut state = PlayerState::default();
+        let mut state = PlayerContext::default();
         state.config.class = Class::Blaster;
 
         service.update(&mut state);
@@ -146,7 +148,7 @@ mod tests {
         let character = mock_character();
         service.set_character(Some(character.clone()));
 
-        let mut state = PlayerState::default();
+        let mut state = PlayerContext::default();
         service.update(&mut state);
 
         assert_eq!(state.config.class, character.class);

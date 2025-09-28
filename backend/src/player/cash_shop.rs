@@ -1,70 +1,105 @@
 use super::{
-    Player, PlayerState,
+    Player,
     timeout::{Lifecycle, Timeout, next_timeout_lifecycle},
 };
-use crate::{bridge::KeyKind, context::Context};
+use crate::{bridge::KeyKind, ecs::Resources, player::PlayerEntity, transition, transition_if};
 
 #[derive(Clone, Copy, Debug)]
-pub enum CashShop {
+enum State {
     Entering,
-    Entered,
+    Entered(Timeout),
     Exitting,
     Exitted,
-    Stalling,
+    Stalling(Timeout),
+    Completed,
 }
 
-// TODO: Improve this?
-pub fn update_cash_shop_context(
-    context: &Context,
-    state: &PlayerState,
-    timeout: Timeout,
-    cash_shop: CashShop,
+#[derive(Clone, Copy, Debug)]
+pub struct CashShop {
+    state: State,
+}
+
+impl CashShop {
+    pub fn new() -> Self {
+        Self {
+            state: State::Entering,
+        }
+    }
+}
+
+pub fn update_cash_shop_state(
+    resources: &Resources,
+    player: &mut PlayerEntity,
+    mut cash_shop: CashShop,
     failed_to_detect_player: bool,
-) -> Player {
-    match cash_shop {
-        CashShop::Entering => {
-            let _ = context.input.send_key(state.config.cash_shop_key);
-            let next = if context.detector_unwrap().detect_player_in_cash_shop() {
-                CashShop::Entered
-            } else {
-                CashShop::Entering
-            };
-            Player::CashShopThenExit(timeout, next)
+) {
+    match cash_shop.state {
+        State::Entering => update_entering(
+            resources,
+            &mut cash_shop,
+            player.context.config.cash_shop_key,
+        ),
+        State::Entered(timeout) => update_entered(&mut cash_shop, timeout),
+        State::Exitting => update_exitting(resources, &mut cash_shop),
+        State::Exitted => update_exitted(&mut cash_shop, failed_to_detect_player),
+        State::Stalling(timeout) => update_stalling(&mut cash_shop, timeout),
+        State::Completed => unreachable!(),
+    }
+
+    transition_if!(
+        player,
+        Player::Idle,
+        Player::CashShopThenExit(cash_shop),
+        matches!(cash_shop.state, State::Completed)
+    );
+}
+
+fn update_exitted(cash_shop: &mut CashShop, failed_to_detect_player: bool) {
+    transition_if!(
+        cash_shop,
+        State::Exitted,
+        State::Stalling(Timeout::default()),
+        failed_to_detect_player
+    );
+}
+
+fn update_entering(resources: &Resources, cash_shop: &mut CashShop, key: KeyKind) {
+    resources.input.send_key(key);
+    transition_if!(
+        cash_shop,
+        State::Entered(Timeout::default()),
+        State::Entering,
+        resources.detector().detect_player_in_cash_shop()
+    );
+}
+
+fn update_entered(cash_shop: &mut CashShop, timeout: Timeout) {
+    // Exit after 10 secs
+    match next_timeout_lifecycle(timeout, 305) {
+        Lifecycle::Ended => transition!(cash_shop, State::Exitting),
+        Lifecycle::Started(timeout) | Lifecycle::Updated(timeout) => {
+            transition!(cash_shop, State::Entered(timeout))
         }
-        CashShop::Entered => {
-            // Exit after 10 secs
-            match next_timeout_lifecycle(timeout, 305) {
-                Lifecycle::Ended => Player::CashShopThenExit(timeout, CashShop::Exitting),
-                Lifecycle::Started(timeout) | Lifecycle::Updated(timeout) => {
-                    Player::CashShopThenExit(timeout, cash_shop)
-                }
-            }
-        }
-        CashShop::Exitting => {
-            let next = if context.detector_unwrap().detect_player_in_cash_shop() {
-                CashShop::Exitting
-            } else {
-                CashShop::Exitted
-            };
-            let _ = context.input.send_key(KeyKind::Esc);
-            let _ = context.input.send_key(KeyKind::Enter);
-            Player::CashShopThenExit(timeout, next)
-        }
-        CashShop::Exitted => {
-            if failed_to_detect_player {
-                Player::CashShopThenExit(timeout, cash_shop)
-            } else {
-                Player::CashShopThenExit(Timeout::default(), CashShop::Stalling)
-            }
-        }
-        CashShop::Stalling => {
-            // Return after 3 secs
-            match next_timeout_lifecycle(timeout, 90) {
-                Lifecycle::Ended => Player::Idle,
-                Lifecycle::Started(timeout) | Lifecycle::Updated(timeout) => {
-                    Player::CashShopThenExit(timeout, cash_shop)
-                }
-            }
+    }
+}
+
+fn update_exitting(resources: &Resources, cash_shop: &mut CashShop) {
+    resources.input.send_key(KeyKind::Esc);
+    resources.input.send_key(KeyKind::Enter);
+    transition_if!(
+        cash_shop,
+        State::Exitting,
+        State::Exitted,
+        resources.detector().detect_player_in_cash_shop()
+    );
+}
+
+fn update_stalling(cash_shop: &mut CashShop, timeout: Timeout) {
+    // Return after 3 secs
+    match next_timeout_lifecycle(timeout, 90) {
+        Lifecycle::Ended => transition!(cash_shop, State::Completed),
+        Lifecycle::Started(timeout) | Lifecycle::Updated(timeout) => {
+            transition!(cash_shop, State::Stalling(timeout))
         }
     }
 }

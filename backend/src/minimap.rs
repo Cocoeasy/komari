@@ -10,14 +10,15 @@ use opencv::core::{MatTraitConst, Point, Rect, Vec4b};
 
 use crate::{
     array::Array,
-    context::{Context, Contextual, ControlFlow},
     detect::{Detector, OtherPlayerKind},
+    ecs::Resources,
     notification::NotificationKind,
     pathing::{
         MAX_PLATFORMS_COUNT, Platform, PlatformWithNeighbors, find_neighbors, find_platforms_bound,
     },
     player::{DOUBLE_JUMP_THRESHOLD, GRAPPLING_MAX_THRESHOLD, JUMP_THRESHOLD, Player},
     task::{Task, Update, update_detection_task},
+    transition, transition_if, try_some_transition,
 };
 
 const MINIMAP_BORDER_WHITENESS_THRESHOLD: u8 = 160;
@@ -38,9 +39,16 @@ impl Hash for HashedRect {
     }
 }
 
-/// Minimap persistent state.
+// A minimap entity.
+#[derive(Debug)]
+pub struct MinimapEntity {
+    pub state: Minimap,
+    pub context: MinimapContext,
+}
+
+/// Minimap entity current context.
 #[derive(Debug, Default)]
-pub struct MinimapState {
+pub struct MinimapContext {
     /// Task to detect the current minimap bounding box and anchor points.
     minimap_task: Option<Task<Result<(Anchors, Rect)>>>,
     /// Task to detect the current minimap's rune.
@@ -68,7 +76,7 @@ pub struct MinimapState {
     platforms_dirty: bool,
 }
 
-impl MinimapState {
+impl MinimapContext {
     #[cfg(test)]
     pub fn platforms(&self) -> &[Platform] {
         &self.platforms
@@ -192,6 +200,7 @@ impl MinimapIdle {
     }
 }
 
+/// States of minimap.
 #[derive(Clone, Copy, Debug)]
 #[allow(clippy::large_enum_variant)] // There is only ever a single instance of Minimap
 pub enum Minimap {
@@ -199,50 +208,43 @@ pub enum Minimap {
     Idle(MinimapIdle),
 }
 
-impl Contextual for Minimap {
-    type Persistent = MinimapState;
-
-    fn update(self, context: &Context, state: &mut MinimapState) -> ControlFlow<Self> {
-        ControlFlow::Next(update_context(self, context, state))
-    }
-}
-
 #[inline]
-fn update_context(contextual: Minimap, context: &Context, state: &mut MinimapState) -> Minimap {
-    match contextual {
-        Minimap::Detecting => update_detecting_context(context, state),
-        Minimap::Idle(idle) => {
-            update_idle_context(context, state, idle).unwrap_or(Minimap::Detecting)
-        }
+pub fn run_system(resources: &Resources, minimap: &mut MinimapEntity, player_state: Player) {
+    match minimap.state {
+        Minimap::Detecting => update_detecting_state(resources, minimap),
+        Minimap::Idle(idle) => update_idle_state(resources, minimap, idle, player_state),
     }
 }
 
-fn update_detecting_context(context: &Context, state: &mut MinimapState) -> Minimap {
-    let Update::Ok((anchors, bbox)) =
-        update_detection_task(context, 2000, &mut state.minimap_task, move |detector| {
+fn update_detecting_state(resources: &Resources, minimap: &mut MinimapEntity) {
+    let Update::Ok((anchors, bbox)) = update_detection_task(
+        resources,
+        2000,
+        &mut minimap.context.minimap_task,
+        move |detector| {
             let bbox = detector.detect_minimap(MINIMAP_BORDER_WHITENESS_THRESHOLD)?;
             let size = bbox.width.min(bbox.height) as usize;
             let tl = anchor_at(detector.mat(), bbox.tl(), size, 1)?;
             let br = anchor_at(detector.mat(), bbox.br(), size, -1)?;
             let anchors = Anchors { tl, br };
+
             debug!(target: "minimap", "anchor points: {anchors:?}");
             Ok((anchors, bbox))
-        })
-    else {
-        return Minimap::Detecting;
+        },
+    ) else {
+        return;
     };
 
-    let (platforms, platforms_bound) = platforms_and_bound(bbox, &state.platforms);
-    state.platforms_dirty = false;
-    state.rune_task = None;
-    state.portals_task = None;
-    state.portals_invalidate_map.clear();
-    state.has_elite_boss_task = None;
-    state.has_guildie_player_task = None;
-    state.has_stranger_player_task = None;
-    state.has_friend_player_task = None;
-
-    Minimap::Idle(MinimapIdle {
+    let (platforms, platforms_bound) = platforms_and_bound(bbox, &minimap.context.platforms);
+    minimap.context.platforms_dirty = false;
+    minimap.context.rune_task = None;
+    minimap.context.portals_task = None;
+    minimap.context.portals_invalidate_map.clear();
+    minimap.context.has_elite_boss_task = None;
+    minimap.context.has_guildie_player_task = None;
+    minimap.context.has_stranger_player_task = None;
+    minimap.context.has_friend_player_task = None;
+    minimap.state = Minimap::Idle(MinimapIdle {
         anchors,
         bbox,
         partially_overlapping: false,
@@ -254,17 +256,16 @@ fn update_detecting_context(context: &Context, state: &mut MinimapState) -> Mini
         portals: Array::new(),
         platforms,
         platforms_bound,
-    })
+    });
 }
 
-fn update_idle_context(
-    context: &Context,
-    state: &mut MinimapState,
-    idle: MinimapIdle,
-) -> Option<Minimap> {
-    if matches!(context.player, Player::CashShopThenExit(_, _)) {
-        return Some(Minimap::Idle(idle));
-    }
+fn update_idle_state(
+    resources: &Resources,
+    minimap: &mut MinimapEntity,
+    minimap_state: MinimapIdle,
+    player_state: Player,
+) {
+    transition_if!(matches!(player_state, Player::CashShopThenExit(_)));
 
     let MinimapIdle {
         anchors,
@@ -278,9 +279,19 @@ fn update_idle_context(
         mut platforms,
         mut platforms_bound,
         ..
-    } = idle;
-    let tl_pixel = pixel_at(context.detector_unwrap().mat(), anchors.tl.0)?;
-    let br_pixel = pixel_at(context.detector_unwrap().mat(), anchors.br.0)?;
+    } = minimap_state;
+    let detector = resources.detector();
+
+    let tl_pixel = try_some_transition!(
+        minimap,
+        Minimap::Detecting,
+        pixel_at(detector.mat(), anchors.tl.0)
+    );
+    let br_pixel = try_some_transition!(
+        minimap,
+        Minimap::Detecting,
+        pixel_at(detector.mat(), anchors.br.0)
+    );
     let tl_match = anchor_match(anchors.tl.1, tl_pixel);
     let br_match = anchor_match(anchors.br.1, br_pixel);
     if !tl_match && !br_match {
@@ -290,50 +301,60 @@ fn update_idle_context(
             (tl_pixel, br_pixel),
             (anchors.tl.1, anchors.br.1)
         );
-        return None;
+        transition!(minimap, Minimap::Detecting);
     }
 
     let partially_overlapping = (tl_match && !br_match) || (!tl_match && br_match);
-    let rune = update_rune_task(context, &mut state.rune_task, bbox, rune);
-    let has_elite_boss =
-        update_elite_boss_task(context, &mut state.has_elite_boss_task, has_elite_boss);
+    let rune = update_rune_task(
+        resources,
+        &mut minimap.context.rune_task,
+        bbox,
+        player_state,
+        rune,
+    );
+    let has_elite_boss = update_elite_boss_task(
+        resources,
+        &mut minimap.context.has_elite_boss_task,
+        has_elite_boss,
+    );
     let has_guildie_player = update_other_player_task(
-        context,
-        &mut state.has_guildie_player_task,
+        resources,
+        &mut minimap.context.has_guildie_player_task,
         bbox,
         has_guildie_player,
         OtherPlayerKind::Guildie,
     );
     let has_stranger_player = update_other_player_task(
-        context,
-        &mut state.has_stranger_player_task,
+        resources,
+        &mut minimap.context.has_stranger_player_task,
         bbox,
         has_stranger_player,
         OtherPlayerKind::Stranger,
     );
     let has_friend_player = update_other_player_task(
-        context,
-        &mut state.has_friend_player_task,
+        resources,
+        &mut minimap.context.has_friend_player_task,
         bbox,
         has_friend_player,
         OtherPlayerKind::Friend,
     );
     let portals = update_portals_task(
-        context,
-        &mut state.portals_task,
-        &mut state.portals_invalidate_map,
+        resources,
+        &mut minimap.context.portals_task,
+        &mut minimap.context.portals_invalidate_map,
         portals,
         bbox,
     );
 
-    if state.platforms_dirty {
-        let (updated_platforms, updated_bound) = platforms_and_bound(bbox, &state.platforms);
+    if minimap.context.platforms_dirty {
+        let (updated_platforms, updated_bound) =
+            platforms_and_bound(bbox, &minimap.context.platforms);
         platforms = updated_platforms;
         platforms_bound = updated_bound;
-        state.platforms_dirty = false;
+        minimap.context.platforms_dirty = false;
     }
 
-    Some(Minimap::Idle(MinimapIdle {
+    minimap.state = Minimap::Idle(MinimapIdle {
         partially_overlapping,
         rune,
         has_elite_boss,
@@ -343,8 +364,8 @@ fn update_idle_context(
         portals,
         platforms,
         platforms_bound,
-        ..idle
-    }))
+        ..minimap_state
+    });
 }
 
 #[inline]
@@ -360,25 +381,26 @@ fn anchor_match(anchor: Vec4b, pixel: Vec4b) -> bool {
 
 #[inline]
 fn update_rune_task(
-    context: &Context,
+    resources: &Resources,
     task: &mut Option<Task<Result<Point>>>,
-    minimap: Rect,
+    minimap_bbox: Rect,
+    player_state: Player,
     rune: Threshold<Point>,
 ) -> Threshold<Point> {
     let was_none = rune.value.is_none();
-    if matches!(context.player, Player::SolvingRune(_)) && !was_none {
+    if matches!(player_state, Player::SolvingRune(_)) && !was_none {
         return rune;
     }
 
-    let rune = update_threshold_detection(context, 5000, rune, task, move |detector| {
+    let rune = update_threshold_detection(resources, 5000, rune, task, move |detector| {
         detector
-            .detect_minimap_rune(minimap)
-            .map(|rune| center_of_bbox(rune, minimap))
+            .detect_minimap_rune(minimap_bbox)
+            .map(|rune| center_of_bbox(rune, minimap_bbox))
     });
 
-    if was_none && rune.value.is_some() && !context.operation.halting() {
+    if was_none && rune.value.is_some() && !resources.operation.halting() {
         info!(target: "minimap", "sending notification for rune...");
-        let _ = context
+        let _ = resources
             .notification
             .schedule_notification(NotificationKind::RuneAppear);
     }
@@ -387,13 +409,13 @@ fn update_rune_task(
 
 #[inline]
 fn update_elite_boss_task(
-    context: &Context,
+    resources: &Resources,
     task: &mut Option<Task<Result<()>>>,
     has_elite_boss: Threshold<()>,
 ) -> Threshold<()> {
     let did_have_elite_boss = has_elite_boss.value.is_some();
     let has_elite_boss =
-        update_threshold_detection(context, 5000, has_elite_boss, task, move |detector| {
+        update_threshold_detection(resources, 5000, has_elite_boss, task, move |detector| {
             if detector.detect_elite_boss_bar() {
                 Ok(())
             } else {
@@ -401,9 +423,9 @@ fn update_elite_boss_task(
             }
         });
 
-    if !context.operation.halting() && !did_have_elite_boss && has_elite_boss.value.is_some() {
+    if !resources.operation.halting() && !did_have_elite_boss && has_elite_boss.value.is_some() {
         info!(target: "minimap", "sending elite boss notification...");
-        let _ = context
+        let _ = resources
             .notification
             .schedule_notification(NotificationKind::EliteBossAppear);
     }
@@ -412,41 +434,41 @@ fn update_elite_boss_task(
 
 #[inline]
 fn update_other_player_task(
-    context: &Context,
+    resources: &Resources,
     task: &mut Option<Task<Result<()>>>,
     minimap: Rect,
     threshold: Threshold<()>,
     kind: OtherPlayerKind,
 ) -> Threshold<()> {
     let has_player = threshold.value.is_some();
-    let threshold = update_threshold_detection(context, 3000, threshold, task, move |detector| {
+    let threshold = update_threshold_detection(resources, 3000, threshold, task, move |detector| {
         if detector.detect_player_kind(minimap, kind) {
             Ok(())
         } else {
             Err(anyhow!("player not found"))
         }
     });
-    if !context.operation.halting() && !has_player && threshold.value.is_some() {
+    if !resources.operation.halting() && !has_player && threshold.value.is_some() {
         info!(target: "minimap", "sending {kind:?} notification...");
         let notification = match kind {
             OtherPlayerKind::Guildie => NotificationKind::PlayerGuildieAppear,
             OtherPlayerKind::Stranger => NotificationKind::PlayerStrangerAppear,
             OtherPlayerKind::Friend => NotificationKind::PlayerFriendAppear,
         };
-        let _ = context.notification.schedule_notification(notification);
+        let _ = resources.notification.schedule_notification(notification);
     }
     threshold
 }
 
 #[inline]
 fn update_portals_task(
-    context: &Context,
+    resources: &Resources,
     task: &mut Option<Task<Result<Vec<Rect>>>>,
     invalidate_map: &mut HashMap<HashedRect, u32>,
     portals: Array<Rect, MAX_PORTALS_COUNT>,
     minimap: Rect,
 ) -> Array<Rect, MAX_PORTALS_COUNT> {
-    let update = update_detection_task(context, 5000, task, move |detector| {
+    let update = update_detection_task(resources, 5000, task, move |detector| {
         Ok(detector.detect_minimap_portals(minimap))
     });
     match update {
@@ -528,7 +550,7 @@ fn platforms_and_bound(
 
 #[inline]
 fn update_threshold_detection<T, F>(
-    context: &Context,
+    resources: &Resources,
     repeat_delay_millis: u64,
     mut threshold: Threshold<T>,
     threshold_task: &mut Option<Task<Result<T>>>,
@@ -539,7 +561,7 @@ where
     F: FnOnce(Box<dyn Detector>) -> Result<T> + Send + 'static,
 {
     let update = update_detection_task(
-        context,
+        resources,
         repeat_delay_millis,
         threshold_task,
         threshold_task_fn,
@@ -614,6 +636,12 @@ mod tests {
     use super::*;
     use crate::detect::MockDetector;
 
+    #[derive(Debug)]
+    enum TaskType {
+        Rune,
+        Minimap,
+    }
+
     fn create_test_mat() -> (Mat, Anchors) {
         let mut mat = Mat::zeros(100, 100, opencv::core::CV_8UC4)
             .unwrap()
@@ -653,35 +681,39 @@ mod tests {
         (detector, bbox, anchors, rune_bbox)
     }
 
-    async fn advance_task(
-        contextual: Minimap,
-        detector: MockDetector,
-        state: &mut MinimapState,
-    ) -> Minimap {
-        let context = Context::new(None, Some(detector));
-        let completed = |state: &MinimapState| {
-            if matches!(contextual, Minimap::Idle(_)) {
-                state.rune_task.as_ref().unwrap().completed()
-            } else {
-                state.minimap_task.as_ref().unwrap().completed()
-            }
+    async fn run_system_until_task_completed(
+        resources: &Resources,
+        minimap: &mut MinimapEntity,
+        task_type: TaskType,
+    ) {
+        let completed = |context: &MinimapContext| match task_type {
+            TaskType::Rune => context
+                .rune_task
+                .as_ref()
+                .map_or(false, |task| task.completed()),
+            TaskType::Minimap => context
+                .minimap_task
+                .as_ref()
+                .map_or(false, |task| task.completed()),
         };
-        let mut minimap = update_context(contextual, &context, state);
-        while !completed(state) {
-            minimap = update_context(minimap, &context, state);
+        while !completed(&minimap.context) {
+            run_system(resources, minimap, Player::Idle);
             time::advance(Duration::from_millis(1000)).await;
         }
-        minimap
     }
 
     #[tokio::test(start_paused = true)]
-    async fn minimap_detecting_to_idle() {
-        let mut state = MinimapState::default();
+    async fn run_system_minimap_detecting_to_idle() {
+        let mut minimap = MinimapEntity {
+            state: Minimap::Detecting,
+            context: MinimapContext::default(),
+        };
         let (detector, bbox, anchors, _) = create_mock_detector();
+        let resources = Resources::new(None, Some(detector));
 
-        let minimap = advance_task(Minimap::Detecting, detector, &mut state).await;
-        assert_matches!(minimap, Minimap::Idle(_));
-        match minimap {
+        run_system_until_task_completed(&resources, &mut minimap, TaskType::Minimap).await;
+
+        match minimap.state {
             Minimap::Idle(idle) => {
                 assert_eq!(idle.anchors, anchors);
                 assert_eq!(idle.bbox, bbox);
@@ -691,24 +723,22 @@ mod tests {
                 assert!(!idle.has_any_other_player());
                 assert!(idle.portals.is_empty());
 
-                assert_matches!(state.minimap_task, Some(_));
-                assert_matches!(state.rune_task, None);
-                assert_matches!(state.has_elite_boss_task, None);
-                assert_matches!(state.has_guildie_player_task, None);
-                assert_matches!(state.has_stranger_player_task, None);
-                assert_matches!(state.has_friend_player_task, None);
-                assert_matches!(state.portals_task, None);
-                assert!(state.portals_invalidate_map.is_empty());
+                assert_matches!(minimap.context.minimap_task, Some(_));
+                assert_matches!(minimap.context.rune_task, None);
+                assert_matches!(minimap.context.has_elite_boss_task, None);
+                assert_matches!(minimap.context.has_guildie_player_task, None);
+                assert_matches!(minimap.context.has_stranger_player_task, None);
+                assert_matches!(minimap.context.has_friend_player_task, None);
+                assert_matches!(minimap.context.portals_task, None);
+                assert!(minimap.context.portals_invalidate_map.is_empty());
             }
-            _ => unreachable!(),
+            _ => panic!(),
         }
     }
 
     #[tokio::test(start_paused = true)]
-    async fn minimap_idle_rune_detection() {
-        let mut state = MinimapState::default();
+    async fn run_system_minimap_idle_rune_detection() {
         let (detector, bbox, anchors, rune_bbox) = create_mock_detector();
-
         let idle = MinimapIdle {
             anchors,
             bbox,
@@ -722,15 +752,97 @@ mod tests {
             platforms: Array::new(),
             platforms_bound: None,
         };
+        let mut minimap = MinimapEntity {
+            state: Minimap::Idle(idle),
+            context: MinimapContext::default(),
+        };
+        let resources = Resources::new(None, Some(detector));
 
-        let minimap = advance_task(Minimap::Idle(idle), detector, &mut state).await;
-        assert_matches!(minimap, Minimap::Idle(_));
-        match minimap {
+        run_system_until_task_completed(&resources, &mut minimap, TaskType::Rune).await;
+
+        match minimap.state {
             Minimap::Idle(idle) => {
                 assert_eq!(idle.rune.value, Some(center_of_bbox(rune_bbox, bbox)));
             }
-            _ => unreachable!(),
+            _ => panic!(),
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn update_threshold_detection_success_resets_fail_count() {
+        let mut threshold = Threshold::new(2);
+        threshold.value = Some(Point::new(1, 2));
+        threshold.fail_count = 1;
+        let mut task = None;
+        let mut detector = MockDetector::new();
+        detector.expect_clone().returning(MockDetector::default);
+        let resources = Resources::new(None, Some(detector));
+
+        while task
+            .as_ref()
+            .is_none_or(|task: &Task<Result<Point>>| !task.completed())
+        {
+            threshold =
+                update_threshold_detection(&resources, 0, threshold, &mut task, |_detector| {
+                    Ok(Point::new(5, 5))
+                });
+            time::advance(Duration::from_millis(1000)).await;
+        }
+
+        assert_eq!(threshold.value, Some(Point::new(5, 5)));
+        assert_eq!(threshold.fail_count, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn update_threshold_detection_fail_increments_until_limit() {
+        let mut threshold = Threshold::new(2);
+        threshold.value = Some(Point::new(3, 3));
+        threshold.fail_count = 0;
+
+        let mut task = None;
+        let mut detector = MockDetector::new();
+        detector.expect_clone().returning(MockDetector::default);
+        let resources = Resources::new(None, Some(detector));
+
+        while task
+            .as_ref()
+            .is_none_or(|task: &Task<Result<Point>>| !task.completed())
+        {
+            threshold =
+                update_threshold_detection(&resources, 0, threshold, &mut task, |_detector| {
+                    Err(anyhow!("fail"))
+                });
+            time::advance(Duration::from_millis(1000)).await;
+        }
+
+        assert_eq!(threshold.value, Some(Point::new(3, 3)));
+        assert_eq!(threshold.fail_count, 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn update_threshold_detection_fail_resets_value_after_limit() {
+        let mut threshold = Threshold::new(2);
+        threshold.value = Some(Point::new(3, 3));
+        threshold.fail_count = 1;
+
+        let mut task = None;
+        let mut detector = MockDetector::new();
+        detector.expect_clone().returning(MockDetector::default);
+        let resources = Resources::new(None, Some(detector));
+
+        while task
+            .as_ref()
+            .is_none_or(|task: &Task<Result<Point>>| !task.completed())
+        {
+            threshold =
+                update_threshold_detection(&resources, 0, threshold, &mut task, |_detector| {
+                    Err(anyhow!("fail again"))
+                });
+            time::advance(Duration::from_millis(1000)).await;
+        }
+
+        assert_eq!(threshold.value, None);
+        assert_eq!(threshold.fail_count, 0);
     }
 
     fn rect(x: i32, y: i32, w: i32, h: i32) -> Rect {
@@ -812,82 +924,5 @@ mod tests {
         let result = merge_portals_and_invalidate_if_needed(old, new, &mut map);
         assert_eq!(result.len(), 0);
         assert!(map.is_empty());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn update_threshold_detection_success_resets_fail_count() {
-        let mut threshold = Threshold::new(2);
-        threshold.value = Some(Point::new(1, 2));
-        threshold.fail_count = 1;
-        let mut task = None;
-        let mut detector = MockDetector::new();
-        detector.expect_clone().returning(MockDetector::default);
-        let context = Context::new(None, Some(detector));
-
-        while task
-            .as_ref()
-            .is_none_or(|task: &Task<Result<Point>>| !task.completed())
-        {
-            threshold =
-                update_threshold_detection(&context, 0, threshold, &mut task, |_detector| {
-                    Ok(Point::new(5, 5))
-                });
-            time::advance(Duration::from_millis(1000)).await;
-        }
-
-        assert_eq!(threshold.value, Some(Point::new(5, 5)));
-        assert_eq!(threshold.fail_count, 0);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn update_threshold_detection_fail_increments_until_limit() {
-        let mut threshold = Threshold::new(2);
-        threshold.value = Some(Point::new(3, 3));
-        threshold.fail_count = 0;
-
-        let mut task = None;
-        let mut detector = MockDetector::new();
-        detector.expect_clone().returning(MockDetector::default);
-        let context = Context::new(None, Some(detector));
-
-        while task
-            .as_ref()
-            .is_none_or(|task: &Task<Result<Point>>| !task.completed())
-        {
-            threshold =
-                update_threshold_detection(&context, 0, threshold, &mut task, |_detector| {
-                    Err(anyhow!("fail"))
-                });
-            time::advance(Duration::from_millis(1000)).await;
-        }
-
-        assert_eq!(threshold.value, Some(Point::new(3, 3)));
-        assert_eq!(threshold.fail_count, 1);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn update_threshold_detection_fail_resets_value_after_limit() {
-        let mut threshold = Threshold::new(2);
-        threshold.value = Some(Point::new(3, 3));
-        threshold.fail_count = 1;
-
-        let mut task = None;
-        let mut detector = MockDetector::new();
-        detector.expect_clone().returning(MockDetector::default);
-        let context = Context::new(None, Some(detector));
-
-        while task
-            .as_ref()
-            .is_none_or(|task: &Task<Result<Point>>| !task.completed())
-        {
-            threshold =
-                update_threshold_detection(&context, 0, threshold, &mut task, |_detector| {
-                    Err(anyhow!("fail again"))
-                });
-            time::advance(Duration::from_millis(1000)).await;
-        }
-
-        assert_eq!(threshold.value, None);
-        assert_eq!(threshold.fail_count, 0);
     }
 }

@@ -10,9 +10,8 @@ use platforms::{Window, capture::query_capture_name_window_pairs, input::InputKi
 
 use crate::{
     CaptureMode, InputMethod as DatabaseInputMethod, Settings,
-    bridge::Capture,
-    bridge::{Input, InputMethod, InputReceiver},
-    context::Operation,
+    bridge::{Capture, Input, InputMethod, InputReceiver},
+    ecs::Operation,
 };
 
 /// A service to handle [`Settings`]-related incoming requests.
@@ -196,7 +195,6 @@ mod tests {
     use crate::bridge::{
         InputMethod as BridgeInputMethod, MockCapture, MockInput, MockInputReceiver,
     };
-    use crate::context::Operation;
     use crate::{CaptureMode, CycleRunStopMode, InputMethod};
 
     #[test]

@@ -3,15 +3,12 @@ use std::fmt;
 use opencv::core::{Point, Rect};
 use strum::Display;
 
-use super::{Player, PlayerState, use_key::UseKey};
+use super::{Player, PlayerContext, use_key::UseKey};
 use crate::{
     Action, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, FamiliarRarity, KeyBinding,
-    Position, SwappableFamiliars,
-    array::Array,
-    bridge::KeyKind,
-    context::{Context, MS_PER_TICK},
-    database::LinkKeyBinding,
-    minimap::Minimap,
+    Position, SwappableFamiliars, array::Array, bridge::KeyKind, database::LinkKeyBinding,
+    ecs::Resources, minimap::Minimap, player::PlayerEntity, run::MS_PER_TICK, transition,
+    transition_if,
 };
 
 /// The minimum x distance required to transition to [`Player::UseKey`] in auto mob action.
@@ -212,26 +209,115 @@ impl From<Action> for PlayerAction {
     }
 }
 
+#[macro_export]
+macro_rules! transition_to_moving {
+    ($player:expr, $moving:expr) => {{
+        $player.state = Player::Moving($moving.dest, $moving.exact, $moving.intermediates);
+        return;
+    }};
+
+    ($player:expr, $moving:expr, $block:block) => {{
+        $block
+        $player.state = Player::Moving($moving.dest, $moving.exact, $moving.intermediates);
+        return;
+    }};
+}
+
+#[macro_export]
+macro_rules! transition_to_moving_if {
+    ($player:expr, $moving:expr, $cond:expr) => {{
+        if $cond {
+            $player.state = Player::Moving($moving.dest, $moving.exact, $moving.intermediates);
+            return;
+        }
+    }};
+
+    ($player:expr, $moving:expr, $cond:expr, $block:block) => {{
+        if $cond {
+            $block
+            $player.state = Player::Moving($moving.dest, $moving.exact, $moving.intermediates);
+            return;
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! transition_from_action {
+    ($player:expr, $state:expr) => {{
+        use $crate::{
+            database::Position,
+            player::{Key, PlayerAction},
+        };
+
+        match next_action(&$player.context).expect("has action") {
+            PlayerAction::SolveRune
+            | PlayerAction::PingPong(_)
+            | PlayerAction::Move(_)
+            | PlayerAction::Key(Key {
+                position: Some(Position { .. }),
+                ..
+            }) => {
+                $player.context.clear_unstucking(false);
+            }
+            _ => (),
+        }
+        $player.context.clear_action_completed();
+        $player.state = $state;
+        return;
+    }};
+
+    ($player:expr, $state:expr, $is_terminal:expr) => {{
+        use $crate::database::Position;
+        use $crate::player::Key;
+        use $crate::player::PlayerAction;
+
+        if $is_terminal {
+            match next_action(&$player.context).expect("has action") {
+                PlayerAction::SolveRune
+                | PlayerAction::PingPong(_)
+                | PlayerAction::Move(_)
+                | PlayerAction::Key(Key {
+                    position: Some(Position { .. }),
+                    ..
+                }) => {
+                    $player.context.clear_unstucking(false);
+                }
+                _ => (),
+            }
+            $player.context.clear_action_completed();
+        }
+        $player.state = $state;
+        return;
+    }};
+}
+
 #[inline]
-pub(super) fn on_ping_pong_double_jump_action(
-    context: &Context,
+pub(super) fn next_action(context: &PlayerContext) -> Option<PlayerAction> {
+    context
+        .priority_action
+        .clone()
+        .or(context.normal_action.clone())
+}
+
+#[inline]
+pub(super) fn update_from_ping_pong_action(
+    resources: &Resources,
+    player: &mut PlayerEntity,
+    minimap_state: Minimap,
     cur_pos: Point,
     bound: Rect,
     direction: PingPongDirection,
-) -> (Player, bool) {
+) {
     let hit_x_bound_edge = match direction {
         PingPongDirection::Left => cur_pos.x - bound.x <= 0,
         PingPongDirection::Right => cur_pos.x - bound.x - bound.width >= 0,
     };
     if hit_x_bound_edge {
-        return (Player::Idle, true);
+        transition_from_action!(player, Player::Idle);
     }
 
-    let _ = context.input.send_key_up(KeyKind::Down);
-    let _ = context.input.send_key_up(KeyKind::Up);
-    let _ = context.input.send_key_up(KeyKind::Left);
-    let _ = context.input.send_key_up(KeyKind::Right);
-    let minimap_width = match context.minimap {
+    release_arrow_keys(resources);
+    let minimap_width = match minimap_state {
         Minimap::Idle(idle) => idle.bbox.width,
         _ => unreachable!(),
     };
@@ -240,7 +326,7 @@ pub(super) fn on_ping_pong_double_jump_action(
         PingPongDirection::Left => Player::Moving(Point::new(0, y), false, None),
         PingPongDirection::Right => Player::Moving(Point::new(minimap_width, y), false, None),
     };
-    (moving, false)
+    transition!(player, moving)
 }
 
 /// Checks proximity in [`PlayerAction::AutoMob`] for transitioning to [`Player::UseKey`].
@@ -250,112 +336,41 @@ pub(super) fn on_ping_pong_double_jump_action(
 ///
 /// This is common logics shared with other contextual states when there is auto mob action.
 #[inline]
-pub(super) fn on_auto_mob_use_key_action(
-    context: &Context,
-    state: Option<&mut PlayerState>,
+#[allow(clippy::too_many_arguments)]
+pub(super) fn update_from_auto_mob_action(
+    resources: &Resources,
+    player: &mut PlayerEntity,
+    minimap_state: Minimap,
     action: PlayerAction,
+    is_pathing: bool,
     cur_pos: Point,
     x_distance: i32,
     y_distance: i32,
-) -> Option<(Player, bool)> {
-    if state.is_some_and(|state| state.auto_mob_pathing_should_use_key(context)) {
-        let _ = context.input.send_key_up(KeyKind::Down);
-        let _ = context.input.send_key_up(KeyKind::Up);
-        let _ = context.input.send_key_up(KeyKind::Left);
-        let _ = context.input.send_key_up(KeyKind::Right);
-        return Some((
-            Player::UseKey(UseKey::from_action_pos(action, Some(cur_pos))),
-            false,
-        ));
-    }
-
-    if x_distance <= AUTO_MOB_USE_KEY_X_THRESHOLD && y_distance <= AUTO_MOB_USE_KEY_Y_THRESHOLD {
-        let _ = context.input.send_key_up(KeyKind::Down);
-        let _ = context.input.send_key_up(KeyKind::Up);
-        let _ = context.input.send_key_up(KeyKind::Left);
-        let _ = context.input.send_key_up(KeyKind::Right);
-        Some((
-            Player::UseKey(UseKey::from_action_pos(action, Some(cur_pos))),
-            false,
-        ))
-    } else {
-        None
-    }
-}
-
-/// Callbacks for when there is a normal or priority [`PlayerAction`].
-///
-/// This version does not require [`PlayerState`] in the callbacks arguments.
-#[inline]
-pub(super) fn on_action(
-    state: &mut PlayerState,
-    on_action_context: impl FnOnce(PlayerAction) -> Option<(Player, bool)>,
-    on_default_context: impl FnOnce() -> Player,
-) -> Player {
-    on_action_state_mut(
-        state,
-        |_, action| on_action_context(action),
-        on_default_context,
-    )
-}
-
-/// Callbacks for when there is a normal or priority [`PlayerAction`].
-///
-/// This version requires a shared reference [`PlayerState`] in the callbacks arguments.
-#[inline]
-pub(super) fn on_action_state(
-    state: &mut PlayerState,
-    on_action_context: impl FnOnce(&PlayerState, PlayerAction) -> Option<(Player, bool)>,
-    on_default_context: impl FnOnce() -> Player,
-) -> Player {
-    on_action_state_mut(
-        state,
-        |state, action| on_action_context(state, action),
-        on_default_context,
-    )
-}
-
-/// Callbacks for when there is a normal or priority [`PlayerAction`].
-///
-/// When there is a priority action, it takes precendece over the normal action. The callback
-/// should return a tuple [`Option<(Player, bool)>`] with:
-/// - `Some((Player, false))` indicating the callback is handled but `Player` is not terminal state
-/// - `Some((Player, true))` indicating the callback is handled and `Player` is terminal state
-/// - `None` indicating the callback is not handled and will be defaulted to `on_default_context`
-///
-/// When the returned tuple indicates a terminal state, the `PlayerAction` is considered complete.
-/// Because this function passes a mutable reference of `PlayerState` to `on_action_context`,
-/// caller should be aware not to clear the action but let this function handles it.
-#[inline]
-pub(super) fn on_action_state_mut(
-    state: &mut PlayerState,
-    on_action_context: impl FnOnce(&mut PlayerState, PlayerAction) -> Option<(Player, bool)>,
-    on_default_context: impl FnOnce() -> Player,
-) -> Player {
-    if let Some(action) = state
-        .priority_action
-        .clone()
-        .or(state.normal_action.clone())
-        && let Some((next, is_terminal)) = on_action_context(state, action.clone())
-    {
-        debug_assert!(state.has_normal_action() || state.has_priority_action());
-        if is_terminal {
-            match action {
-                PlayerAction::SolveRune
-                | PlayerAction::PingPong(_)
-                | PlayerAction::Move(_)
-                | PlayerAction::Key(Key {
-                    position: Some(Position { .. }),
-                    ..
-                }) => {
-                    state.clear_unstucking(false);
-                }
-                _ => (),
-            }
-            // FIXME: clear only when has position?
-            state.clear_action_completed();
+) {
+    transition_if!(
+        player,
+        Player::UseKey(UseKey::from_action_pos(action, Some(cur_pos))),
+        is_pathing
+            && player
+                .context
+                .auto_mob_pathing_should_use_key(resources, minimap_state),
+        {
+            release_arrow_keys(resources);
         }
-        return next;
-    }
-    on_default_context()
+    );
+    transition_if!(
+        player,
+        Player::UseKey(UseKey::from_action_pos(action, Some(cur_pos))),
+        x_distance <= AUTO_MOB_USE_KEY_X_THRESHOLD && y_distance <= AUTO_MOB_USE_KEY_Y_THRESHOLD,
+        {
+            release_arrow_keys(resources);
+        }
+    );
+}
+
+fn release_arrow_keys(resources: &Resources) {
+    resources.input.send_key_up(KeyKind::Down);
+    resources.input.send_key_up(KeyKind::Up);
+    resources.input.send_key_up(KeyKind::Left);
+    resources.input.send_key_up(KeyKind::Right);
 }

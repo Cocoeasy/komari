@@ -1,6 +1,6 @@
 use super::{
-    Key, PingPong, Player, PlayerState,
-    actions::on_ping_pong_double_jump_action,
+    Key, PingPong, Player, PlayerContext,
+    actions::update_from_ping_pong_action,
     moving::Moving,
     timeout::{MovingLifecycle, next_moving_lifecycle_with_axis},
     use_key::UseKey,
@@ -8,14 +8,13 @@ use super::{
 use crate::{
     ActionKeyWith,
     bridge::{InputKeyDownOptions, KeyKind},
-    context::Context,
+    ecs::Resources,
     minimap::Minimap,
     player::{
-        MOVE_TIMEOUT, PlayerAction,
-        actions::{on_action, on_auto_mob_use_key_action},
-        state::LastMovement,
-        timeout::ChangeAxis,
+        MOVE_TIMEOUT, PlayerAction, PlayerEntity, actions::update_from_auto_mob_action,
+        next_action, state::LastMovement, timeout::ChangeAxis,
     },
+    transition, transition_if, transition_to_moving,
 };
 
 /// Number of ticks to wait before spamming jump key.
@@ -45,11 +44,11 @@ const SOFT_UP_JUMP_THRESHOLD: i32 = 16;
 
 #[derive(Debug, Clone, Copy)]
 struct Mage {
-    update_stage: MageUpJumpingStage,
+    state: MageState,
 }
 
 #[derive(Debug, Clone, Copy)]
-enum MageUpJumpingStage {
+enum MageState {
     Teleporting,
     UpJumping,
     Flying,
@@ -75,7 +74,7 @@ pub struct UpJumping {
 }
 
 impl UpJumping {
-    pub fn new(moving: Moving, context: &Context, state: &PlayerState) -> Self {
+    pub fn new(moving: Moving, resources: &Resources, player_context: &PlayerContext) -> Self {
         let (y_distance, _) = moving.y_distance_direction_from(true, moving.pos);
         let spam_delay = if y_distance <= SOFT_UP_JUMP_THRESHOLD {
             SOFT_SPAM_DELAY
@@ -83,8 +82,11 @@ impl UpJumping {
             SPAM_DELAY
         };
         let auto_mob_wait_completion =
-            state.has_auto_mob_action_only() && context.rng.random_bool(0.5);
-        let kind = up_jumping_kind(state.config.upjump_key, state.config.teleport_key.is_some());
+            player_context.has_auto_mob_action_only() && resources.rng.random_bool(0.5);
+        let kind = up_jumping_kind(
+            player_context.config.upjump_key,
+            player_context.config.teleport_key.is_some(),
+        );
 
         Self {
             moving,
@@ -95,189 +97,206 @@ impl UpJumping {
     }
 
     #[inline]
-    fn moving(self, moving: Moving) -> UpJumping {
-        UpJumping { moving, ..self }
+    fn moving(mut self, moving: Moving) -> UpJumping {
+        self.moving = moving;
+        self
     }
 }
 
-/// Updates the [`Player::UpJumping`] contextual state
+/// Updates the [`Player::UpJumping`] contextual state.
 ///
 /// This state can only be transitioned via [`Player::Moving`] when the
 /// player has reached the destination x-wise. Before performing an up jump, it will check for
 /// stationary state and whether the player is currently near a portal. If the player is near
 /// a portal, this action is aborted. The up jump action is made to be adapted for various classes
 /// that has different up jump key combination.
-pub fn update_up_jumping_context(
-    context: &Context,
-    state: &mut PlayerState,
-    mut up_jumping: UpJumping,
-) -> Player {
-    let up_jump_key = state.config.upjump_key;
-    let jump_key = state.config.jump_key;
-    let is_flight = state.config.up_jump_is_flight;
+pub fn update_up_jumping_state(
+    resources: &Resources,
+    player: &mut PlayerEntity,
+    minimap_state: Minimap,
+) {
+    let Player::UpJumping(mut up_jumping) = player.state else {
+        panic!("state is not up jumping");
+    };
+    let up_jump_key = player.context.config.upjump_key;
+    let jump_key = player.context.config.jump_key;
+    let is_flight = player.context.config.up_jump_is_flight;
 
     match next_moving_lifecycle_with_axis(
         up_jumping.moving,
-        state.last_known_pos.expect("in positional context"),
+        player
+            .context
+            .last_known_pos
+            .expect("in positional context"),
         TIMEOUT,
         ChangeAxis::Vertical,
     ) {
         MovingLifecycle::Started(moving) => {
             // Stall until near stationary
-            if state.velocity.0 > X_NEAR_STATIONARY_THRESHOLD
-                || state.velocity.1 > Y_NEAR_STATIONARY_VELOCITY_THRESHOLD
-            {
-                return Player::UpJumping(up_jumping.moving(moving.timeout_started(false)));
-            }
+            let (x_velocity, y_velocity) = player.context.velocity;
+            transition_if!(
+                player,
+                Player::UpJumping(up_jumping.moving(moving.timeout_started(false))),
+                x_velocity > X_NEAR_STATIONARY_THRESHOLD
+                    || y_velocity > Y_NEAR_STATIONARY_VELOCITY_THRESHOLD
+            );
 
-            if let Minimap::Idle(idle) = context.minimap
-                && idle.is_position_inside_portal(moving.pos)
-            {
-                state.clear_action_completed();
-                return Player::Idle;
-            }
-            state.last_movement = Some(LastMovement::UpJumping);
+            let is_inside_portal = match minimap_state {
+                Minimap::Idle(idle) => idle.is_position_inside_portal(moving.pos),
+                _ => false,
+            };
+            transition_if!(player, Player::Idle, is_inside_portal, {
+                player.context.clear_action_completed();
+            });
 
+            player.context.last_movement = Some(LastMovement::UpJumping);
             match &mut up_jumping.kind {
                 UpJumpingKind::Mage(mage) => {
                     let (y_distance, _) = moving.y_distance_direction_from(true, moving.pos);
                     let teleport_after_up_jump =
                         !is_flight && y_distance >= UP_JUMP_AND_TELEPORT_THRESHOLD;
-                    mage.update_stage = if is_flight {
-                        MageUpJumpingStage::Flying
+                    mage.state = if is_flight {
+                        MageState::Flying
                     } else if teleport_after_up_jump {
-                        MageUpJumpingStage::UpJumping
+                        MageState::UpJumping
                     } else {
-                        MageUpJumpingStage::Teleporting
+                        MageState::Teleporting
                     };
 
-                    let _ = context.input.send_key_down(KeyKind::Up);
+                    resources.input.send_key_down(KeyKind::Up);
                     let can_jump =
                         y_distance >= TELEPORT_WITH_JUMP_THRESHOLD && up_jump_key.is_none();
                     if is_flight || can_jump {
-                        let _ = context.input.send_key(jump_key);
+                        resources.input.send_key(jump_key);
                     }
                 }
                 UpJumpingKind::UpArrow => {
-                    let _ = context.input.send_key(jump_key);
+                    resources.input.send_key(jump_key);
                 }
                 UpJumpingKind::JumpKey => {
-                    let _ = context.input.send_key_down(KeyKind::Up);
-                    let _ = context.input.send_key(jump_key);
+                    resources.input.send_key_down(KeyKind::Up);
+                    resources.input.send_key(jump_key);
                 }
                 UpJumpingKind::SpecificKey => {
-                    let _ = context.input.send_key_down(KeyKind::Up);
+                    resources.input.send_key_down(KeyKind::Up);
                     if is_flight {
-                        let _ = context.input.send_key(jump_key);
+                        resources.input.send_key(jump_key);
                     }
                 }
             }
-
-            Player::UpJumping(up_jumping.moving(moving))
+            transition!(player, Player::UpJumping(up_jumping.moving(moving)));
         }
-        MovingLifecycle::Ended(moving) => {
-            let _ = context.input.send_key_up(KeyKind::Up);
-            Player::Moving(moving.dest, moving.exact, moving.intermediates)
-        }
+        MovingLifecycle::Ended(moving) => transition_to_moving!(player, moving, {
+            resources.input.send_key_up(KeyKind::Up);
+        }),
         MovingLifecycle::Updated(mut moving) => {
             let cur_pos = moving.pos;
             let (y_distance, y_direction) = moving.y_distance_direction_from(true, moving.pos);
-
             update_up_jump(
-                context,
-                state,
+                resources,
+                &player.context,
                 &mut moving,
                 &mut up_jumping,
                 y_distance,
                 y_direction,
             );
-            on_action(
-                state,
-                |action| match action {
-                    PlayerAction::AutoMob(_) => {
-                        if moving.completed
+
+            // Sets initial next state first
+            player.state = Player::UpJumping(up_jumping.moving(moving));
+            let action = next_action(&player.context);
+            match action {
+                Some(PlayerAction::AutoMob(_)) => {
+                    transition_if!(
+                        player,
+                        Player::Moving(moving.dest, moving.exact, moving.intermediates),
+                        moving.completed
                             && moving.is_destination_intermediate()
-                            && y_direction <= 0
+                            && y_direction <= 0,
                         {
-                            let _ = context.input.send_key_up(KeyKind::Up);
-                            return Some((
-                                Player::Moving(moving.dest, moving.exact, moving.intermediates),
-                                false,
-                            ));
+                            resources.input.send_key_up(KeyKind::Up);
                         }
-                        if up_jumping.auto_mob_wait_completion && !moving.completed {
-                            return None;
-                        }
-                        let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
-                        let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
-                        on_auto_mob_use_key_action(
-                            context, None, action, cur_pos, x_distance, y_distance,
-                        )
-                    }
-                    PlayerAction::Key(Key {
-                        with: ActionKeyWith::Any,
-                        ..
-                    }) => {
-                        if !moving.completed || y_direction > 0 {
-                            None
-                        } else {
-                            Some((Player::UseKey(UseKey::from_action(action)), false))
-                        }
-                    }
-                    PlayerAction::PingPong(PingPong {
-                        bound, direction, ..
-                    }) => {
-                        if moving.completed
-                            && context.rng.random_perlin_bool(
+                    );
+                    transition_if!(up_jumping.auto_mob_wait_completion && !moving.completed);
+
+                    let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
+                    let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
+                    update_from_auto_mob_action(
+                        resources,
+                        player,
+                        minimap_state,
+                        action.unwrap(),
+                        false,
+                        cur_pos,
+                        x_distance,
+                        y_distance,
+                    )
+                }
+                Some(PlayerAction::Key(Key {
+                    with: ActionKeyWith::Any,
+                    ..
+                })) => transition_if!(
+                    player,
+                    Player::UseKey(UseKey::from_action(action.unwrap())),
+                    moving.completed && y_direction <= 0
+                ),
+                Some(PlayerAction::PingPong(PingPong {
+                    bound, direction, ..
+                })) => {
+                    transition_if!(
+                        !moving.completed
+                            || !resources.rng.random_perlin_bool(
                                 cur_pos.x,
                                 cur_pos.y,
-                                context.tick,
-                                0.7,
+                                resources.tick,
+                                0.7
                             )
-                        {
-                            Some(on_ping_pong_double_jump_action(
-                                context, cur_pos, bound, direction,
-                            ))
-                        } else {
-                            None
-                        }
-                    }
+                    );
+                    update_from_ping_pong_action(
+                        resources,
+                        player,
+                        minimap_state,
+                        cur_pos,
+                        bound,
+                        direction,
+                    );
+                }
+                None
+                | Some(
                     PlayerAction::Key(Key {
                         with: ActionKeyWith::Stationary | ActionKeyWith::DoubleJump,
                         ..
                     })
                     | PlayerAction::Move(_)
-                    | PlayerAction::SolveRune => None,
-                    _ => unreachable!(),
-                },
-                || Player::UpJumping(up_jumping.moving(moving)),
-            )
+                    | PlayerAction::SolveRune,
+                ) => (),
+                _ => unreachable!(),
+            }
         }
     }
 }
 
 fn update_up_jump(
-    context: &Context,
-    state: &mut PlayerState,
+    resources: &Resources,
+    context: &PlayerContext,
     moving: &mut Moving,
     up_jumping: &mut UpJumping,
     y_distance: i32,
     y_direction: i32,
 ) {
-    let jump_key = state.config.jump_key;
-    let up_jump_key = state.config.upjump_key;
-    let is_flight = state.config.up_jump_is_flight;
+    let jump_key = context.config.jump_key;
+    let up_jump_key = context.config.upjump_key;
+    let is_flight = context.config.up_jump_is_flight;
 
     if moving.completed {
-        let _ = context.input.send_key_up(KeyKind::Up);
+        resources.input.send_key_up(KeyKind::Up);
         return;
     }
 
     match &mut up_jumping.kind {
         UpJumpingKind::Mage(mage) => {
             update_mage_up_jump(
+                resources,
                 context,
-                state,
                 moving,
                 mage,
                 up_jumping.spam_delay,
@@ -286,30 +305,30 @@ fn update_up_jump(
             );
         }
         UpJumpingKind::UpArrow | UpJumpingKind::JumpKey => {
-            if state.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
+            if context.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
                 // Spam jump/up arrow key until the player y changes
                 // above a threshold as sending jump key twice
                 // doesn't work.
                 if moving.timeout.total >= up_jumping.spam_delay {
                     if matches!(up_jumping.kind, UpJumpingKind::UpArrow) {
-                        let _ = context.input.send_key(KeyKind::Up);
+                        resources.input.send_key(KeyKind::Up);
                     } else {
-                        let _ = context.input.send_key(jump_key);
+                        resources.input.send_key(jump_key);
                     }
                 }
             } else {
-                *moving = moving.completed(true);
+                moving.completed = true;
             }
         }
         UpJumpingKind::SpecificKey => {
             if !is_flight {
-                let _ = context
+                resources
                     .input
                     .send_key(up_jump_key.expect("has up jump key"));
-                *moving = moving.completed(true);
+                moving.completed = true;
             } else {
                 update_flying(
-                    context,
+                    resources,
                     moving,
                     y_direction,
                     up_jump_key.expect("has up jump key"),
@@ -320,42 +339,42 @@ fn update_up_jump(
 }
 
 fn update_mage_up_jump(
-    context: &Context,
-    state: &PlayerState,
+    resources: &Resources,
+    context: &PlayerContext,
     moving: &mut Moving,
     mage: &mut Mage,
     spam_delay: u32,
     y_distance: i32,
     y_direction: i32,
 ) {
-    let jump_key = state.config.jump_key;
-    let up_jump_key = state.config.upjump_key;
-    let teleport_key = state.config.teleport_key.expect("has teleport key");
+    let jump_key = context.config.jump_key;
+    let up_jump_key = context.config.upjump_key;
+    let teleport_key = context.config.teleport_key.expect("has teleport key");
 
-    match mage.update_stage {
-        MageUpJumpingStage::Teleporting => {
+    match mage.state {
+        MageState::Teleporting => {
             if y_direction > 0 && y_distance < TELEPORT_WITH_JUMP_THRESHOLD {
-                let _ = context.input.send_key(teleport_key);
-                *moving = moving.completed(true);
+                resources.input.send_key(teleport_key);
+                moving.completed = true;
             }
         }
-        MageUpJumpingStage::UpJumping => match up_jump_key {
+        MageState::UpJumping => match up_jump_key {
             Some(key) => {
-                let _ = context.input.send_key(key);
-                mage.update_stage = MageUpJumpingStage::Teleporting;
+                resources.input.send_key(key);
+                transition!(mage, MageState::Teleporting);
             }
             None => {
-                if state.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
+                if context.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
                     if moving.timeout.total >= spam_delay {
-                        let _ = context.input.send_key(jump_key);
+                        resources.input.send_key(jump_key);
                     }
                 } else {
-                    mage.update_stage = MageUpJumpingStage::Teleporting;
+                    transition!(mage, MageState::Teleporting);
                 }
             }
         },
-        MageUpJumpingStage::Flying => update_flying(
-            context,
+        MageState::Flying => update_flying(
+            resources,
             moving,
             y_direction,
             up_jump_key.unwrap_or(teleport_key),
@@ -364,14 +383,14 @@ fn update_mage_up_jump(
 }
 
 #[inline]
-fn update_flying(context: &Context, moving: &mut Moving, y_direction: i32, key: KeyKind) {
+fn update_flying(resources: &Resources, moving: &mut Moving, y_direction: i32, key: KeyKind) {
     if y_direction > 0 {
-        let _ = context
+        resources
             .input
             .send_key_down_with_options(key, InputKeyDownOptions::default().repeatable());
     } else {
-        let _ = context.input.send_key_up(key);
-        *moving = moving.completed(true);
+        resources.input.send_key_up(key);
+        moving.completed = true;
     }
 }
 
@@ -379,7 +398,7 @@ fn update_flying(context: &Context, moving: &mut Moving, y_direction: i32, key: 
 fn up_jumping_kind(up_jump_key: Option<KeyKind>, has_teleport_key: bool) -> UpJumpingKind {
     match (up_jump_key, has_teleport_key) {
         (Some(_), true) | (None, true) => UpJumpingKind::Mage(Mage {
-            update_stage: MageUpJumpingStage::Teleporting, // Overwrite later
+            state: MageState::Teleporting, // Overwrite later
         }),
         (Some(KeyKind::Up), false) => UpJumpingKind::UpArrow,
         (None, false) => UpJumpingKind::JumpKey,
@@ -387,109 +406,136 @@ fn up_jumping_kind(up_jump_key: Option<KeyKind>, has_teleport_key: bool) -> UpJu
     }
 }
 
-// TODO: Update tests
 #[cfg(test)]
 mod tests {
     use std::assert_matches::assert_matches;
 
     use opencv::core::Point;
 
-    use super::{Moving, PlayerState, UpJumping, update_up_jumping_context};
-    use crate::{
-        bridge::{KeyKind, MockInput},
-        context::Context,
-        player::{Player, Timeout},
-    };
+    use super::*;
+    use crate::bridge::{KeyKind, MockInput};
+    use crate::ecs::Resources;
+    use crate::player::{Player, PlayerEntity};
 
-    #[test]
-    fn up_jumping_start() {
-        let pos = Point::new(5, 5);
-        let moving = Moving {
-            pos,
-            dest: Point::new(5, 20),
-            ..Default::default()
+    fn setup_player(up_jumping: UpJumping) -> PlayerEntity {
+        let mut player = PlayerEntity {
+            state: Player::UpJumping(up_jumping),
+            context: PlayerContext::default(),
         };
-        let mut state = PlayerState::default();
-        let mut context = Context::new(None, None);
-        state.config.jump_key = KeyKind::Space;
-        state.last_known_pos = Some(pos);
-        state.is_stationary = true;
-
-        let mut keys = MockInput::new();
-        keys.expect_send_key_down()
-            .withf(|key| matches!(key, KeyKind::Up))
-            .returning(|_| Ok(()))
-            .once();
-        keys.expect_send_key()
-            .withf(|key| matches!(key, KeyKind::Space))
-            .returning(|_| Ok(()))
-            .once();
-        context.input = Box::new(keys);
-        // Space + Up only
-        let up_jumping = UpJumping::new(moving, &context, &state);
-        update_up_jumping_context(&context, &mut state, up_jumping);
-        let _ = context.input; // drop mock for validation
-
-        state.config.upjump_key = Some(KeyKind::C);
-        let mut keys = MockInput::new();
-        keys.expect_send_key_down()
-            .withf(|key| matches!(key, KeyKind::Up))
-            .once()
-            .returning(|_| Ok(()));
-        keys.expect_send_key()
-            .withf(|key| matches!(key, KeyKind::Space))
-            .never()
-            .returning(|_| Ok(()));
-        context.input = Box::new(keys);
-        // Up only
-        let up_jumping = UpJumping::new(moving, &context, &state);
-        update_up_jumping_context(&context, &mut state, up_jumping);
-        let _ = context.input; // drop mock for validation
-
-        state.config.teleport_key = Some(KeyKind::Shift);
-        let mut keys = MockInput::new();
-        keys.expect_send_key_down()
-            .withf(|key| matches!(key, KeyKind::Up))
-            .once()
-            .returning(|_| Ok(()));
-        keys.expect_send_key()
-            .withf(|key| matches!(key, KeyKind::Space))
-            .never()
-            .returning(|_| Ok(()));
-        context.input = Box::new(keys);
-        // Space + Up
-        let up_jumping = UpJumping::new(moving, &context, &state);
-        update_up_jumping_context(&context, &mut state, up_jumping);
-        let _ = context.input; // drop mock for validation
+        player.context.last_known_pos = Some(Point::new(0, 0));
+        player.context.config.jump_key = KeyKind::Space;
+        player
     }
 
     #[test]
-    fn up_jumping_update() {
-        let moving_pos = Point::new(7, 1);
-        let moving = Moving {
-            pos: moving_pos,
-            timeout: Timeout {
-                started: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let mut state = PlayerState::default();
-        state.last_known_pos = Some(Point::new(7, 7));
-        state.velocity = (0.0, 1.36);
-        let context = Context::new(None, None);
-        let up_jumping = UpJumping::new(moving, &context, &state);
+    fn update_up_jumping_state_started_jump_key_presses_up_and_jump() {
+        let moving = Moving::new(Point::new(0, 0), Point::new(0, 20), true, None);
+        let mut player = setup_player(UpJumping {
+            moving,
+            kind: UpJumpingKind::JumpKey,
+            spam_delay: SPAM_DELAY,
+            auto_mob_wait_completion: false,
+        });
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
+            .withf(|k| *k == KeyKind::Up)
+            .once();
+        keys.expect_send_key()
+            .withf(|k| *k == KeyKind::Space)
+            .once();
+        let resources = Resources::new(Some(keys), None);
 
-        // up jumped because y velocity > 1.35
+        update_up_jumping_state(&resources, &mut player, Minimap::Detecting);
+
+        assert_matches!(player.state, Player::UpJumping(_));
+    }
+
+    #[test]
+    fn update_up_jumping_state_started_up_arrow_presses_jump_only() {
+        let moving = Moving::new(Point::new(0, 0), Point::new(0, 20), true, None);
+        let mut player = setup_player(UpJumping {
+            moving,
+            kind: UpJumpingKind::UpArrow,
+            spam_delay: SPAM_DELAY,
+            auto_mob_wait_completion: false,
+        });
+        let mut keys = MockInput::new();
+        keys.expect_send_key()
+            .withf(|k| *k == KeyKind::Space)
+            .once();
+        let resources = Resources::new(Some(keys), None);
+
+        update_up_jumping_state(&resources, &mut player, Minimap::Detecting);
+
+        assert_matches!(player.state, Player::UpJumping(_));
+    }
+
+    #[test]
+    fn update_up_jumping_state_started_specific_key_presses_up_only() {
+        let moving = Moving::new(Point::new(0, 0), Point::new(0, 20), true, None);
+        let mut player = setup_player(UpJumping {
+            moving,
+            kind: UpJumpingKind::SpecificKey,
+            spam_delay: SPAM_DELAY,
+            auto_mob_wait_completion: false,
+        });
+        player.context.config.upjump_key = Some(KeyKind::C);
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
+            .withf(|k| *k == KeyKind::Up)
+            .once();
+        let resources = Resources::new(Some(keys), None);
+
+        update_up_jumping_state(&resources, &mut player, Minimap::Detecting);
+
+        assert_matches!(player.state, Player::UpJumping(_));
+    }
+
+    #[test]
+    fn update_up_jumping_state_started_mage_up_and_jump() {
+        let moving = Moving::new(Point::new(0, 0), Point::new(0, 25), true, None);
+        let mut player = setup_player(UpJumping {
+            moving,
+            kind: UpJumpingKind::Mage(Mage {
+                state: MageState::Teleporting,
+            }),
+            spam_delay: SPAM_DELAY,
+            auto_mob_wait_completion: false,
+        });
+        player.context.config.teleport_key = Some(KeyKind::Shift);
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
+            .withf(|k| *k == KeyKind::Up)
+            .once();
+        keys.expect_send_key()
+            .withf(|k| *k == KeyKind::Space)
+            .once();
+        let resources = Resources::new(Some(keys), None);
+
+        update_up_jumping_state(&resources, &mut player, Minimap::Detecting);
+
+        assert_matches!(player.state, Player::UpJumping(_));
+    }
+
+    #[test]
+    fn update_up_jumping_state_updated_velocity_marks_completed() {
+        let mut moving = Moving::new(Point::new(0, 0), Point::new(0, 20), true, None);
+        moving.timeout.started = true;
+        let mut player = setup_player(UpJumping {
+            moving,
+            kind: UpJumpingKind::JumpKey,
+            spam_delay: SPAM_DELAY,
+            auto_mob_wait_completion: false,
+        });
+        player.context.velocity = (0.0, 2.0); // Y velocity above threshold
+        let resources = Resources::new(None, None);
+
+        update_up_jumping_state(&resources, &mut player, Minimap::Detecting);
+
         assert_matches!(
-            update_up_jumping_context(&context, &mut state, up_jumping),
+            player.state,
             Player::UpJumping(UpJumping {
                 moving: Moving {
-                    timeout: Timeout {
-                        current: 1,
-                        total: 1,
-                        ..
-                    },
                     completed: true,
                     ..
                 },
@@ -499,128 +545,116 @@ mod tests {
     }
 
     #[test]
-    fn up_jump_demon_slayer() {
-        let pos = Point::new(10, 10);
-        let dest = Point::new(10, 30);
-        let mut moving = Moving {
-            pos,
-            dest,
-            ..Default::default()
-        };
-        let mut state = PlayerState::default();
-        state.config.upjump_key = Some(KeyKind::Up); // Demon Slayer uses Up
-        state.config.jump_key = KeyKind::Space;
-        state.last_known_pos = Some(pos);
-        state.is_stationary = true;
-
-        let mut keys = MockInput::new();
-        keys.expect_send_key_down()
-            .withf(|key| *key == KeyKind::Up)
-            .never();
-        keys.expect_send_key()
-            .withf(|key| *key == KeyKind::Space)
-            .once()
-            .returning(|_| Ok(()));
-        let mut context = Context::new(None, None);
-        context.input = Box::new(keys);
-
-        // Start by sending Space only
-        let up_jumping = UpJumping::new(moving, &context, &state);
-        update_up_jumping_context(&context, &mut state, up_jumping);
-        let _ = context.input;
-
-        // Update by sending Up
-        let mut keys = MockInput::new();
-        moving.timeout.total = 7; // SPAM_DELAY
+    fn update_up_jumping_state_updated_before_spam_delay_no_keys_sent() {
+        let mut moving = Moving::new(Point::new(0, 0), Point::new(0, 20), true, None);
         moving.timeout.started = true;
-        keys.expect_send_key()
-            .withf(|key| *key == KeyKind::Up)
-            .times(2)
-            .returning(|_| Ok(()));
-        keys.expect_send_key()
-            .withf(|key| *key == KeyKind::Space)
-            .never();
-        context.input = Box::new(keys);
-        let up_jumping = UpJumping::new(moving, &context, &state);
-        update_up_jumping_context(&context, &mut state, up_jumping);
-        update_up_jumping_context(&context, &mut state, up_jumping);
-        let _ = context.input;
-    }
-
-    #[test]
-    fn up_jump_mage() {
-        let pos = Point::new(10, 10);
-        let dest = Point::new(10, 30);
-        let mut moving = Moving {
-            pos,
-            dest,
-            ..Default::default()
-        };
-        let mut state = PlayerState::default();
-        state.config.teleport_key = Some(KeyKind::Shift);
-        state.config.jump_key = KeyKind::Space;
-        state.last_known_pos = Some(pos);
-        state.is_stationary = true;
-
+        moving.timeout.total = SPAM_DELAY - 2; // before threshold
+        let mut player = setup_player(UpJumping {
+            moving,
+            kind: UpJumpingKind::JumpKey,
+            spam_delay: SPAM_DELAY,
+            auto_mob_wait_completion: false,
+        });
         let mut keys = MockInput::new();
-        keys.expect_send_key_down()
-            .withf(|key| *key == KeyKind::Up)
-            .once()
-            .returning(|_| Ok(()));
-        keys.expect_send_key()
-            .withf(|key| *key == KeyKind::Space)
-            .once()
-            .returning(|_| Ok(()));
-        let mut context = Context::new(None, None);
-        context.input = Box::new(keys);
-
-        // Start by sending Up and Space
-        let up_jumping = UpJumping::new(moving, &context, &state);
-        update_up_jumping_context(&context, &mut state, up_jumping);
-        let _ = context.input;
-
-        // Change to started
-        moving.timeout.started = true;
-
-        // Not sending any key before delay
-        let mut keys = MockInput::new();
-        moving.timeout.total = 4; // Before SPAM_DELAY
         keys.expect_send_key().never();
-        context.input = Box::new(keys);
+        keys.expect_send_key_down().never();
+        keys.expect_send_key_up().never();
+        let resources = Resources::new(Some(keys), None);
 
-        let up_jumping = UpJumping::new(moving, &context, &state);
-        assert_matches!(
-            update_up_jumping_context(&context, &mut state, up_jumping),
-            Player::UpJumping(UpJumping {
-                moving: Moving {
-                    completed: false,
-                    ..
-                },
-                ..
-            })
-        );
-        let _ = context.input;
+        update_up_jumping_state(&resources, &mut player, Minimap::Detecting);
 
-        // Send key after delay
+        assert_matches!(player.state, Player::UpJumping(_));
+    }
+
+    #[test]
+    fn update_up_jumping_state_updated_spam_jump_key_after_delay() {
+        let mut moving = Moving::new(Point::new(0, 0), Point::new(0, 20), true, None);
+        moving.timeout.started = true;
+        moving.timeout.total = SPAM_DELAY; // exactly at threshold
+        let mut player = setup_player(UpJumping {
+            moving,
+            kind: UpJumpingKind::JumpKey,
+            spam_delay: SPAM_DELAY,
+            auto_mob_wait_completion: false,
+        });
         let mut keys = MockInput::new();
-        moving.timeout.total = 7; // At SPAM_DELAY
+        // On spam, JumpKey kind sends Jump again
         keys.expect_send_key()
-            .withf(|key| *key == KeyKind::Shift)
-            .once()
-            .returning(|_| Ok(()));
-        context.input = Box::new(keys);
-        state.last_known_pos = Some(Point { y: 17, ..pos });
-        let up_jumping = UpJumping::new(moving, &context, &state);
-        assert_matches!(
-            update_up_jumping_context(&context, &mut state, up_jumping),
-            Player::UpJumping(UpJumping {
-                moving: Moving {
-                    completed: true,
-                    ..
-                },
-                ..
-            })
-        );
-        let _ = context.input;
+            .withf(|k| *k == KeyKind::Space)
+            .once();
+        let resources = Resources::new(Some(keys), None);
+
+        update_up_jumping_state(&resources, &mut player, Minimap::Detecting);
+
+        assert_matches!(player.state, Player::UpJumping(_));
+    }
+
+    #[test]
+    fn update_up_jumping_state_updated_spam_specific_key_after_delay() {
+        let mut moving = Moving::new(Point::new(0, 0), Point::new(0, 20), true, None);
+        moving.timeout.started = true;
+        moving.timeout.total = SPAM_DELAY;
+        let mut player = setup_player(UpJumping {
+            moving,
+            kind: UpJumpingKind::SpecificKey,
+            spam_delay: SPAM_DELAY,
+            auto_mob_wait_completion: false,
+        });
+        player.context.config.upjump_key = Some(KeyKind::C);
+        let mut keys = MockInput::new();
+        keys.expect_send_key().withf(|k| *k == KeyKind::C).once();
+        let resources = Resources::new(Some(keys), None);
+
+        update_up_jumping_state(&resources, &mut player, Minimap::Detecting);
+
+        assert_matches!(player.state, Player::UpJumping(_));
+    }
+
+    #[test]
+    fn update_up_jumping_state_updated_mage_spam_jump_after_delay() {
+        let mut moving = Moving::new(Point::new(0, 0), Point::new(0, 25), true, None);
+        moving.timeout.started = true;
+        moving.timeout.total = SPAM_DELAY;
+        let mut player = setup_player(UpJumping {
+            moving,
+            kind: UpJumpingKind::Mage(Mage {
+                state: MageState::UpJumping,
+            }),
+            spam_delay: SPAM_DELAY,
+            auto_mob_wait_completion: false,
+        });
+        player.context.config.jump_key = KeyKind::Space;
+        player.context.config.teleport_key = Some(KeyKind::Shift);
+        let mut keys = MockInput::new();
+        keys.expect_send_key()
+            .withf(|k| *k == KeyKind::Space)
+            .once();
+        let resources = Resources::new(Some(keys), None);
+
+        update_up_jumping_state(&resources, &mut player, Minimap::Detecting);
+
+        assert_matches!(player.state, Player::UpJumping(_));
+    }
+
+    #[test]
+    fn update_up_jumping_state_updated_completed_and_releases_up() {
+        let mut moving = Moving::new(Point::new(0, 0), Point::new(0, 20), true, None);
+        moving.completed = true;
+        moving.timeout.started = true;
+        let mut player = setup_player(UpJumping {
+            moving,
+            kind: UpJumpingKind::JumpKey,
+            spam_delay: SPAM_DELAY,
+            auto_mob_wait_completion: false,
+        });
+        let mut keys = MockInput::new();
+        keys.expect_send_key_up()
+            .withf(|k| *k == KeyKind::Up)
+            .once();
+        let resources = Resources::new(Some(keys), None);
+
+        update_up_jumping_state(&resources, &mut player, Minimap::Detecting);
+
+        assert_matches!(player.state, Player::UpJumping(_));
     }
 }

@@ -1,21 +1,23 @@
-use std::cmp::Ordering;
+use std::{assert_matches::assert_matches, cmp::Ordering};
 
 use opencv::core::Point;
 
 use super::{
-    AutoMob, PingPongDirection, PlayerState, Timeout,
-    actions::{Key, PingPong, PlayerAction, on_ping_pong_double_jump_action},
+    AutoMob, PingPongDirection, PlayerContext, Timeout,
+    actions::{Key, PingPong, PlayerAction, update_from_ping_pong_action},
     double_jump::DoubleJumping,
     timeout::{Lifecycle, next_timeout_lifecycle},
 };
 use crate::{
     ActionKeyDirection, ActionKeyWith, Class, KeyBinding, LinkKeyBinding, Position,
     bridge::KeyKind,
-    context::Context,
+    ecs::Resources,
+    minimap::Minimap,
     player::{
         AUTO_MOB_USE_KEY_X_THRESHOLD, AUTO_MOB_USE_KEY_Y_THRESHOLD, LastMovement, MOVE_TIMEOUT,
-        Moving, Player, on_action_state_mut,
+        Moving, Player, PlayerEntity, next_action,
     },
+    transition, transition_from_action, transition_if,
 };
 
 /// The total number of ticks for changing direction before timing out.
@@ -29,19 +31,19 @@ enum ActionInfo {
     AutoMobbing { should_terminate: bool },
 }
 
-/// The different stages of using key.
+/// The different states of using key.
 #[derive(Clone, Copy, Debug)]
-pub enum UseKeyStage {
+enum State {
     /// Checks whether [`ActionKeyWith`] and [`ActionKeyDirection`] are satisfied and stalls
     /// for [`UseKey::wait_before_use_ticks`].
     Precondition,
     /// Changes direction to match [`ActionKeyDirection`].
     ///
-    /// Returns to [`UseKeyStage::Precondition`] upon timeout.
+    /// Returns to [`State::Precondition`] upon timeout.
     ChangingDirection(Timeout),
     /// Ensures player double jumped or is stationary.
     ///
-    /// Returns to [`UseKeyStage::Precondition`] if player is stationary or
+    /// Returns to [`State::Precondition`] if player is stationary or
     /// transfers to [`Player::DoubleJumping`].
     EnsuringUseWith,
     /// Uses the actual key with optional [`LinkKeyBinding`] and stalls
@@ -49,6 +51,14 @@ pub enum UseKeyStage {
     Using(Timeout, bool),
     /// Ensures all [`UseKey::count`] times executed.
     Postcondition,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PendingTransition {
+    None,
+    WaitBefore,
+    WaitAfter,
+    DoubleJump,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -61,8 +71,9 @@ pub struct UseKey {
     with: ActionKeyWith,
     wait_before_use_ticks: u32,
     wait_after_use_ticks: u32,
+    pending_transition: PendingTransition,
     action_info: Option<ActionInfo>,
-    stage: UseKeyStage,
+    state: State,
 }
 
 impl UseKey {
@@ -99,8 +110,9 @@ impl UseKey {
                     with,
                     wait_before_use_ticks: wait_before,
                     wait_after_use_ticks: wait_after,
+                    pending_transition: PendingTransition::None,
                     action_info: None,
-                    stage: UseKeyStage::Precondition,
+                    state: State::Precondition,
                 }
             }
             PlayerAction::AutoMob(mob) => {
@@ -128,8 +140,9 @@ impl UseKey {
                     with: mob.with,
                     wait_before_use_ticks: wait_before,
                     wait_after_use_ticks: wait_after,
+                    pending_transition: PendingTransition::None,
                     action_info: Some(ActionInfo::AutoMobbing { should_terminate }),
-                    stage: UseKeyStage::Precondition,
+                    state: State::Precondition,
                 }
             }
             PlayerAction::PingPong(ping_pong) => {
@@ -156,8 +169,9 @@ impl UseKey {
                     with: ping_pong.with,
                     wait_before_use_ticks: wait_before,
                     wait_after_use_ticks: wait_after,
+                    pending_transition: PendingTransition::None,
                     action_info: None,
-                    stage: UseKeyStage::Precondition,
+                    state: State::Precondition,
                 }
             }
             _ => unreachable!(),
@@ -172,114 +186,209 @@ impl UseKey {
 /// be transitioned to immediately by [`Player::Idle`].
 ///
 /// There are multiple stages to using a key as described by [`UseKeyStage`].
-pub fn update_use_key_context(
-    context: &Context,
-    state: &mut PlayerState,
-    use_key: UseKey,
-) -> Player {
-    let next = match use_key.stage {
-        UseKeyStage::Precondition => update_precondition(state, use_key),
-        UseKeyStage::ChangingDirection(timeout) => {
-            update_changing_direction(context, state, use_key, timeout)
-        }
-        UseKeyStage::EnsuringUseWith => update_ensuring_use_with(state, use_key),
-        UseKeyStage::Using(timeout, completed) => {
-            update_using(context, state, use_key, timeout, completed)
-        }
-        UseKeyStage::Postcondition => update_post_condition(use_key),
+pub fn update_use_key_state(
+    resources: &Resources,
+    player: &mut PlayerEntity,
+    minimap_state: Minimap,
+) {
+    let Player::UseKey(mut use_key) = player.state else {
+        panic!("state is not using key")
     };
 
-    on_action_state_mut(
-        state,
-        |state, action| match action {
-            PlayerAction::AutoMob(AutoMob {
-                position: Position { y, .. },
-                ..
-            }) => {
-                let should_terminate = matches!(
-                    use_key.action_info,
-                    Some(ActionInfo::AutoMobbing {
-                        should_terminate: true
-                    })
-                );
-                let is_terminal = should_terminate && matches!(next, Player::Idle);
-                if is_terminal {
-                    state.auto_mob_track_ignore_xs(context, false);
-                    if state.auto_mob_reachable_y_require_update(y) {
-                        return Some((Player::Stalling(Timeout::default(), MOVE_TIMEOUT), false));
-                    }
+    match use_key.state {
+        State::Precondition => {
+            update_precondition(&player.context, &mut use_key);
+            transition_if!(
+                player,
+                Player::Stalling(Timeout::default(), use_key.wait_before_use_ticks),
+                matches!(use_key.pending_transition, PendingTransition::WaitBefore),
+                {
+                    use_key.pending_transition = PendingTransition::None;
+                    use_key.state = State::Using(Timeout::default(), false);
+                    player.context.stalling_timeout_state = Some(Player::UseKey(use_key));
                 }
-                Some((next, is_terminal))
-            }
-            PlayerAction::PingPong(PingPong {
-                bound, direction, ..
-            }) => {
-                if matches!(next, Player::Idle) {
-                    state.clear_unstucking(true);
-                    Some(on_ping_pong_double_jump_action(
-                        context,
-                        state.last_known_pos.expect("in positional context"),
-                        bound,
-                        direction,
-                    ))
-                } else {
-                    None
+            );
+        }
+        State::ChangingDirection(_) => {
+            update_changing_direction(resources, &mut player.context, &mut use_key);
+        }
+        State::EnsuringUseWith => {
+            update_ensuring_use_with(&player.context, &mut use_key);
+            transition_if!(
+                player,
+                Player::DoubleJumping(DoubleJumping::new(
+                    Moving::new(
+                        player.context.last_known_pos.expect("in positional state"),
+                        player.context.last_known_pos.expect("in positional state"),
+                        false,
+                        None,
+                    ),
+                    true,
+                    true,
+                )),
+                matches!(use_key.pending_transition, PendingTransition::DoubleJump),
+                {
+                    use_key.pending_transition = PendingTransition::None;
                 }
+            );
+        }
+        State::Using(timeout, completed) => {
+            update_using(resources, &player.context, &mut use_key, timeout, completed);
+            transition_if!(
+                player,
+                Player::Stalling(Timeout::default(), use_key.wait_after_use_ticks),
+                matches!(use_key.pending_transition, PendingTransition::WaitAfter),
+                {
+                    use_key.pending_transition = PendingTransition::None;
+                    use_key.state = State::Postcondition;
+                    player.context.stalling_timeout_state = Some(Player::UseKey(use_key));
+                }
+            );
+        }
+        State::Postcondition => {
+            use_key.current_count += 1;
+            if use_key.current_count < use_key.count {
+                use_key.state = State::Precondition;
             }
-            PlayerAction::Key(_) => Some((next, matches!(next, Player::Idle))),
-            PlayerAction::Move(_) => None,
-            _ => unreachable!(),
-        },
-        || next,
-    )
+        }
+    };
+
+    let player_next_state = if use_key.current_count >= use_key.count {
+        Player::Idle
+    } else {
+        Player::UseKey(use_key)
+    };
+    let is_terminal = matches!(player_next_state, Player::Idle);
+
+    match next_action(&player.context) {
+        Some(PlayerAction::AutoMob(AutoMob {
+            position: Position { y, .. },
+            ..
+        })) => {
+            let should_terminate = matches!(
+                use_key.action_info,
+                Some(ActionInfo::AutoMobbing {
+                    should_terminate: true
+                })
+            );
+            transition_if!(player, player_next_state, !is_terminal || !should_terminate);
+
+            player
+                .context
+                .auto_mob_track_ignore_xs(minimap_state, false);
+            transition_if!(
+                player,
+                Player::Stalling(Timeout::default(), MOVE_TIMEOUT),
+                player.context.auto_mob_reachable_y_require_update(y)
+            );
+
+            assert_matches!(player_next_state, Player::Idle);
+            transition_from_action!(player, player_next_state);
+        }
+
+        Some(PlayerAction::PingPong(PingPong {
+            bound, direction, ..
+        })) => {
+            transition_if!(player, player_next_state, !is_terminal);
+
+            player.context.clear_unstucking(true);
+            update_from_ping_pong_action(
+                resources,
+                player,
+                minimap_state,
+                player.context.last_known_pos.expect("in positional state"),
+                bound,
+                direction,
+            )
+        }
+
+        Some(PlayerAction::Move(_) | PlayerAction::Key(_)) => {
+            transition_from_action!(player, player_next_state, is_terminal)
+        }
+
+        None => transition!(player, player_next_state),
+
+        _ => unreachable!(),
+    }
 }
 
-fn update_post_condition(use_key: UseKey) -> Player {
-    if use_key.current_count + 1 < use_key.count {
-        Player::UseKey(UseKey {
-            current_count: use_key.current_count + 1,
-            stage: UseKeyStage::Precondition,
-            ..use_key
-        })
-    } else {
-        Player::Idle
+fn update_precondition(context: &PlayerContext, use_key: &mut UseKey) {
+    transition_if!(
+        use_key,
+        State::ChangingDirection(Timeout::default()),
+        !ensure_direction(context, use_key.direction)
+    );
+
+    transition_if!(
+        use_key,
+        State::EnsuringUseWith,
+        !ensure_use_with(context, use_key.with)
+    );
+
+    transition_if!(
+        use_key,
+        State::Using(Timeout::default(), false),
+        use_key.wait_before_use_ticks == 0
+    );
+
+    use_key.pending_transition = PendingTransition::WaitBefore;
+}
+
+#[inline]
+fn ensure_direction(context: &PlayerContext, direction: ActionKeyDirection) -> bool {
+    match direction {
+        ActionKeyDirection::Any => true,
+        ActionKeyDirection::Left | ActionKeyDirection::Right => {
+            direction == context.last_known_direction
+        }
+    }
+}
+
+#[inline]
+fn ensure_use_with(context: &PlayerContext, with: ActionKeyWith) -> bool {
+    match with {
+        ActionKeyWith::Any => true,
+        ActionKeyWith::Stationary => context.is_stationary,
+        ActionKeyWith::DoubleJump => {
+            matches!(context.last_movement, Some(LastMovement::DoubleJumping))
+        }
     }
 }
 
 fn update_using(
-    context: &Context,
-    state: &mut PlayerState,
-    use_key: UseKey,
+    resources: &Resources,
+    context: &PlayerContext,
+    use_key: &mut UseKey,
     timeout: Timeout,
     completed: bool,
-) -> Player {
+) {
     match use_key.link_key {
         Some(LinkKeyBinding::After(_)) => {
             if !timeout.started {
-                let _ = context.input.send_key(use_key.key.into());
+                resources.input.send_key(use_key.key.into());
             }
             if !completed {
                 return update_link_key(
-                    context,
-                    state.config.class,
-                    state.config.jump_key,
+                    resources,
                     use_key,
+                    context.config.class,
+                    context.config.jump_key,
                     timeout,
                     completed,
                 );
             }
         }
         Some(LinkKeyBinding::AtTheSame(key)) => {
-            let _ = context.input.send_key(key.into());
-            let _ = context.input.send_key(use_key.key.into());
+            resources.input.send_key(key.into());
+            resources.input.send_key(use_key.key.into());
         }
         Some(LinkKeyBinding::Along(_)) => {
             if !completed {
                 return update_link_key(
-                    context,
-                    state.config.class,
-                    state.config.jump_key,
+                    resources,
                     use_key,
+                    context.config.class,
+                    context.config.jump_key,
                     timeout,
                     completed,
                 );
@@ -288,143 +397,77 @@ fn update_using(
         Some(LinkKeyBinding::Before(_)) | None => {
             if use_key.link_key.is_some() && !completed {
                 return update_link_key(
-                    context,
-                    state.config.class,
-                    state.config.jump_key,
+                    resources,
                     use_key,
+                    context.config.class,
+                    context.config.jump_key,
                     timeout,
                     completed,
                 );
             }
-            let _ = context.input.send_key(use_key.key.into());
+            resources.input.send_key(use_key.key.into());
         }
     }
 
-    let next = Player::UseKey(UseKey {
-        stage: UseKeyStage::Postcondition,
-        ..use_key
-    });
-    if use_key.wait_after_use_ticks > 0 {
-        state.stalling_timeout_state = Some(next);
-        Player::Stalling(Timeout::default(), use_key.wait_after_use_ticks)
-    } else {
-        next
-    }
+    transition_if!(
+        use_key,
+        State::Postcondition,
+        use_key.wait_after_use_ticks == 0
+    );
+
+    use_key.pending_transition = PendingTransition::WaitAfter;
 }
 
-fn update_ensuring_use_with(state: &mut PlayerState, use_key: UseKey) -> Player {
+fn update_ensuring_use_with(context: &PlayerContext, use_key: &mut UseKey) {
     match use_key.with {
         ActionKeyWith::Any => unreachable!(),
-        ActionKeyWith::Stationary => {
-            let stage = if state.is_stationary {
-                UseKeyStage::Precondition
-            } else {
-                UseKeyStage::EnsuringUseWith
-            };
-            Player::UseKey(UseKey { stage, ..use_key })
-        }
+        ActionKeyWith::Stationary => transition_if!(
+            use_key,
+            State::Precondition,
+            State::EnsuringUseWith,
+            context.is_stationary
+        ),
         ActionKeyWith::DoubleJump => {
-            let pos = state.last_known_pos.expect("in positional context");
-            Player::DoubleJumping(DoubleJumping::new(
-                Moving::new(pos, pos, false, None),
-                true,
-                true,
-            ))
+            use_key.pending_transition = PendingTransition::DoubleJump;
         }
     }
 }
 
 fn update_changing_direction(
-    context: &Context,
-    state: &mut PlayerState,
-    use_key: UseKey,
-    timeout: Timeout,
-) -> Player {
+    resources: &Resources,
+    context: &mut PlayerContext,
+    use_key: &mut UseKey,
+) {
+    let State::ChangingDirection(timeout) = use_key.state else {
+        panic!("using key state is not changing direction");
+    };
     let key = match use_key.direction {
         ActionKeyDirection::Left => KeyKind::Left,
         ActionKeyDirection::Right => KeyKind::Right,
         ActionKeyDirection::Any => unreachable!(),
     };
+
     match next_timeout_lifecycle(timeout, CHANGE_DIRECTION_TIMEOUT) {
-        Lifecycle::Started(timeout) => {
-            let _ = context.input.send_key_down(key);
-            Player::UseKey(UseKey {
-                stage: UseKeyStage::ChangingDirection(timeout),
-                ..use_key
-            })
-        }
-        Lifecycle::Ended => {
-            let _ = context.input.send_key_up(key);
-            state.last_known_direction = use_key.direction;
-            Player::UseKey(UseKey {
-                stage: UseKeyStage::Precondition,
-                ..use_key
-            })
-        }
-        Lifecycle::Updated(timeout) => Player::UseKey(UseKey {
-            stage: UseKeyStage::ChangingDirection(timeout),
-            ..use_key
+        Lifecycle::Started(timeout) => transition!(use_key, State::ChangingDirection(timeout), {
+            resources.input.send_key_down(key);
         }),
-    }
-}
-
-fn update_precondition(state: &mut PlayerState, use_key: UseKey) -> Player {
-    if !ensure_direction(state, use_key.direction) {
-        return Player::UseKey(UseKey {
-            stage: UseKeyStage::ChangingDirection(Timeout::default()),
-            ..use_key
-        });
-    }
-    if !ensure_use_with(state, use_key) {
-        return Player::UseKey(UseKey {
-            stage: UseKeyStage::EnsuringUseWith,
-            ..use_key
-        });
-    }
-
-    let next = Player::UseKey(UseKey {
-        stage: UseKeyStage::Using(Timeout::default(), false),
-        ..use_key
-    });
-    if use_key.wait_before_use_ticks > 0 {
-        state.stalling_timeout_state = Some(next);
-        Player::Stalling(Timeout::default(), use_key.wait_before_use_ticks)
-    } else {
-        state.use_immediate_control_flow = true;
-        next
-    }
-}
-
-#[inline]
-fn ensure_direction(state: &PlayerState, direction: ActionKeyDirection) -> bool {
-    match direction {
-        ActionKeyDirection::Any => true,
-        ActionKeyDirection::Left | ActionKeyDirection::Right => {
-            direction == state.last_known_direction
-        }
-    }
-}
-
-#[inline]
-fn ensure_use_with(state: &PlayerState, use_key: UseKey) -> bool {
-    match use_key.with {
-        ActionKeyWith::Any => true,
-        ActionKeyWith::Stationary => state.is_stationary,
-        ActionKeyWith::DoubleJump => {
-            matches!(state.last_movement, Some(LastMovement::DoubleJumping))
-        }
+        Lifecycle::Ended => transition!(use_key, State::Precondition, {
+            resources.input.send_key_up(key);
+            context.last_known_direction = use_key.direction;
+        }),
+        Lifecycle::Updated(timeout) => transition!(use_key, State::ChangingDirection(timeout)),
     }
 }
 
 #[inline]
 fn update_link_key(
-    context: &Context,
+    resources: &Resources,
+    use_key: &mut UseKey,
     class: Class,
     jump_key: KeyKind,
-    use_key: UseKey,
     timeout: Timeout,
     completed: bool,
-) -> Player {
+) {
     let link_key = use_key.link_key.unwrap();
     let link_key_timeout = if matches!(link_key, LinkKeyBinding::Along(_)) {
         4
@@ -438,51 +481,38 @@ fn update_link_key(
     };
 
     match next_timeout_lifecycle(timeout, link_key_timeout) {
-        Lifecycle::Started(timeout) => {
+        Lifecycle::Started(timeout) => transition!(use_key, State::Using(timeout, completed), {
             match link_key {
                 LinkKeyBinding::Before(key) => {
-                    let _ = context.input.send_key(key.into());
+                    resources.input.send_key(key.into());
                 }
                 LinkKeyBinding::Along(key) => {
-                    let _ = context.input.send_key_down(key.into());
+                    resources.input.send_key_down(key.into());
                 }
                 LinkKeyBinding::AtTheSame(_) | LinkKeyBinding::After(_) => (),
             }
-
-            Player::UseKey(UseKey {
-                stage: UseKeyStage::Using(timeout, completed),
-                ..use_key
-            })
-        }
-        Lifecycle::Ended => {
+        }),
+        Lifecycle::Ended => transition!(use_key, State::Using(timeout, true), {
             match link_key {
                 LinkKeyBinding::After(key) => {
-                    let _ = context.input.send_key(key.into());
+                    resources.input.send_key(key.into());
                     if matches!(class, Class::Blaster) && KeyKind::from(key) != jump_key {
-                        let _ = context.input.send_key(jump_key);
+                        resources.input.send_key(jump_key);
                     }
                 }
                 LinkKeyBinding::Along(key) => {
-                    let _ = context.input.send_key_up(key.into());
+                    resources.input.send_key_up(key.into());
                 }
                 LinkKeyBinding::AtTheSame(_) | LinkKeyBinding::Before(_) => (),
             }
-
-            Player::UseKey(UseKey {
-                stage: UseKeyStage::Using(timeout, true),
-                ..use_key
-            })
-        }
+        }),
         Lifecycle::Updated(timeout) => {
-            if matches!(link_key, LinkKeyBinding::Along(_))
-                && timeout.total == LINK_ALONG_PRESS_TICK
-            {
-                let _ = context.input.send_key(use_key.key.into());
-            }
-
-            Player::UseKey(UseKey {
-                stage: UseKeyStage::Using(timeout, completed),
-                ..use_key
+            transition!(use_key, State::Using(timeout, completed), {
+                if matches!(link_key, LinkKeyBinding::Along(_))
+                    && timeout.total == LINK_ALONG_PRESS_TICK
+                {
+                    resources.input.send_key(use_key.key.into());
+                }
             })
         }
     }
@@ -500,21 +530,32 @@ fn random_wait_ticks(wait_base_ticks: u32, wait_random_range: u32) -> u32 {
 mod tests {
     use std::assert_matches::assert_matches;
 
+    use mockall::Sequence;
+    use opencv::core::Point;
+
     use crate::{
         ActionKeyDirection, ActionKeyWith, KeyBinding, LinkKeyBinding,
         bridge::{KeyKind, MockInput},
-        context::Context,
+        ecs::Resources,
+        minimap::Minimap,
         player::{
-            Player, PlayerState, Timeout, update_non_positional_context,
-            use_key::{UseKey, UseKeyStage, update_use_key_context},
+            Player, PlayerContext, PlayerEntity, Timeout,
+            double_jump::DoubleJumping,
+            use_key::{PendingTransition, State, UseKey, update_use_key_state},
         },
     };
 
+    fn make_player(use_key: UseKey) -> PlayerEntity {
+        PlayerEntity {
+            state: Player::UseKey(use_key),
+            context: PlayerContext::default(),
+        }
+    }
+
     #[test]
-    fn use_key_ensure_use_with() {
-        let mut state = PlayerState::default();
-        let context = Context::new(None, None);
-        let use_key = UseKey {
+    fn update_use_key_state_ensuring_use_with_stationary() {
+        let resources = Resources::new(None, None);
+        let mut player = make_player(UseKey {
             key: KeyBinding::A,
             link_key: None,
             count: 1,
@@ -524,44 +565,77 @@ mod tests {
             wait_before_use_ticks: 0,
             wait_after_use_ticks: 0,
             action_info: None,
-            stage: UseKeyStage::Precondition,
-        };
+            state: State::Precondition,
+            pending_transition: PendingTransition::None,
+        });
 
-        // ensuring use with start
-        let mut player = Player::UseKey(use_key);
-        player = update_non_positional_context(player, &context, &mut state, false).unwrap();
+        // Start EnsuringUseWith
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
         assert_matches!(
-            player,
+            player.state,
             Player::UseKey(UseKey {
-                stage: UseKeyStage::EnsuringUseWith,
+                state: State::EnsuringUseWith,
                 ..
             })
         );
 
-        // ensuring use with complete
-        state.is_stationary = true;
-        player = update_non_positional_context(player, &context, &mut state, false).unwrap();
+        // Complete EnsuringUseWith when stationary
+        player.context.is_stationary = true;
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
         assert_matches!(
-            player,
+            player.state,
             Player::UseKey(UseKey {
-                stage: UseKeyStage::Precondition,
+                state: State::Precondition,
                 ..
             })
         );
     }
 
     #[test]
-    fn use_key_change_direction() {
+    fn update_use_key_state_ensuring_use_with_double_jump() {
+        let resources = Resources::new(None, None);
+        let mut player = make_player(UseKey {
+            key: KeyBinding::A,
+            link_key: None,
+            count: 1,
+            current_count: 0,
+            direction: ActionKeyDirection::Any,
+            with: ActionKeyWith::DoubleJump,
+            wait_before_use_ticks: 0,
+            wait_after_use_ticks: 0,
+            action_info: None,
+            state: State::Precondition,
+            pending_transition: PendingTransition::None,
+        });
+        player.context.last_known_pos = Some(Point::default());
+
+        // Start EnsuringUseWith
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
+        assert_matches!(
+            player.state,
+            Player::UseKey(UseKey {
+                state: State::EnsuringUseWith,
+                ..
+            })
+        );
+
+        // Transitions to double jump
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
+        assert_matches!(
+            player.state,
+            Player::DoubleJumping(DoubleJumping { forced: true, .. })
+        );
+    }
+
+    #[test]
+    fn update_use_key_state_changing_direction() {
         let mut keys = MockInput::new();
         keys.expect_send_key_down()
-            .withf(|key| matches!(key, KeyKind::Left))
-            .returning(|_| Ok(()));
+            .withf(|k| matches!(k, KeyKind::Left));
         keys.expect_send_key_up()
-            .withf(|key| matches!(key, KeyKind::Left))
-            .returning(|_| Ok(()));
-        let mut state = PlayerState::default();
-        let context = Context::new(Some(keys), None);
-        let use_key = UseKey {
+            .withf(|k| matches!(k, KeyKind::Left));
+        let resources = Resources::new(Some(keys), None);
+        let mut use_key = UseKey {
             key: KeyBinding::A,
             link_key: None,
             count: 1,
@@ -571,100 +645,101 @@ mod tests {
             wait_before_use_ticks: 0,
             wait_after_use_ticks: 0,
             action_info: None,
-            stage: UseKeyStage::Precondition,
+            state: State::Precondition,
+            pending_transition: PendingTransition::None,
         };
+        let mut player = make_player(use_key);
 
-        // changing direction
-        let mut player = Player::UseKey(use_key);
-        player = update_non_positional_context(player, &context, &mut state, false).unwrap();
-        assert_matches!(state.last_known_direction, ActionKeyDirection::Any);
+        // Transition into ChangingDirection
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
         assert_matches!(
-            player,
+            player.state,
             Player::UseKey(UseKey {
-                stage: UseKeyStage::ChangingDirection(Timeout { started: false, .. }),
+                state: State::ChangingDirection(Timeout { started: false, .. }),
                 ..
             })
         );
 
-        // changing direction start
-        player = update_non_positional_context(player, &context, &mut state, false).unwrap();
-        assert_matches!(state.last_known_direction, ActionKeyDirection::Any);
+        // Sends down on started
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
         assert_matches!(
-            player,
+            player.state,
             Player::UseKey(UseKey {
-                stage: UseKeyStage::ChangingDirection(Timeout { started: true, .. }),
+                state: State::ChangingDirection(Timeout { started: true, .. }),
                 ..
             })
         );
 
-        // changing direction complete
-        let mut player = Player::UseKey(UseKey {
-            stage: UseKeyStage::ChangingDirection(Timeout {
-                started: true,
-                current: 3,
-                total: 3,
-            }),
-            ..use_key
+        // Simulate completion of ChangingDirection
+        use_key.state = State::ChangingDirection(Timeout {
+            started: true,
+            total: 3,
+            current: 3,
         });
-        player = update_non_positional_context(player, &context, &mut state, false).unwrap();
-        assert_matches!(state.last_known_direction, ActionKeyDirection::Left);
+        player = make_player(use_key);
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
         assert_matches!(
-            player,
+            player.context.last_known_direction,
+            ActionKeyDirection::Left
+        );
+        assert_matches!(
+            player.state,
             Player::UseKey(UseKey {
-                stage: UseKeyStage::Precondition,
+                state: State::Precondition,
                 ..
             })
-        )
+        );
     }
 
     #[test]
-    fn use_key_count() {
+    fn update_use_key_state_repeats_until_count_reached() {
         let mut keys = MockInput::new();
         keys.expect_send_key()
-            .times(100)
-            .withf(|key| matches!(key, KeyKind::A))
-            .returning(|_| Ok(()));
-        let mut state = PlayerState::default();
-        let context = Context::new(Some(keys), None);
+            .times(3)
+            .withf(|k| matches!(k, KeyKind::A));
+        let resources = Resources::new(Some(keys), None);
         let use_key = UseKey {
             key: KeyBinding::A,
             link_key: None,
-            count: 100,
+            count: 3,
             current_count: 0,
             direction: ActionKeyDirection::Any,
             with: ActionKeyWith::Any,
             wait_before_use_ticks: 0,
             wait_after_use_ticks: 0,
             action_info: None,
-            stage: UseKeyStage::Precondition,
+            state: State::Precondition,
+            pending_transition: PendingTransition::None,
         };
+        let mut player = make_player(use_key);
 
-        let mut player = Player::UseKey(use_key);
-        for i in 0..100 {
-            player = update_non_positional_context(player, &context, &mut state, false).unwrap();
+        for i in 0..3 {
+            update_use_key_state(&resources, &mut player, Minimap::Detecting);
             assert_matches!(
-                player,
+                player.state,
                 Player::UseKey(UseKey {
-                    stage: UseKeyStage::Using(_, _),
+                    state: State::Using(_, _),
                     ..
                 })
             );
-            player = update_non_positional_context(player, &context, &mut state, false).unwrap();
+
+            update_use_key_state(&resources, &mut player, Minimap::Detecting);
             assert_matches!(
-                player,
+                player.state,
                 Player::UseKey(UseKey {
-                    stage: UseKeyStage::Postcondition,
+                    state: State::Postcondition,
                     ..
                 })
             );
-            player = update_non_positional_context(player, &context, &mut state, false).unwrap();
-            if i == 99 {
-                assert_matches!(player, Player::Idle);
+
+            update_use_key_state(&resources, &mut player, Minimap::Detecting);
+            if i == 2 {
+                assert_matches!(player.state, Player::Idle);
             } else {
                 assert_matches!(
-                    player,
+                    player.state,
                     Player::UseKey(UseKey {
-                        stage: UseKeyStage::Precondition,
+                        state: State::Precondition,
                         ..
                     })
                 );
@@ -673,13 +748,8 @@ mod tests {
     }
 
     #[test]
-    fn use_key_stalling() {
-        let mut keys = MockInput::new();
-        keys.expect_send_key()
-            .withf(|key| matches!(key, KeyKind::A))
-            .return_once(|_| Ok(()));
-        let mut state = PlayerState::default();
-        let context = Context::new(Some(keys), None);
+    fn update_use_key_state_waits_before() {
+        let resources = Resources::new(None, None);
         let use_key = UseKey {
             key: KeyBinding::A,
             link_key: None,
@@ -687,60 +757,79 @@ mod tests {
             current_count: 0,
             direction: ActionKeyDirection::Any,
             with: ActionKeyWith::Any,
-            wait_before_use_ticks: 10,
-            wait_after_use_ticks: 20,
+            wait_before_use_ticks: 5,
+            wait_after_use_ticks: 0,
             action_info: None,
-            stage: UseKeyStage::Precondition,
+            state: State::Precondition,
+            pending_transition: PendingTransition::None,
         };
+        let mut player = make_player(use_key);
 
-        // enter stalling state
-        assert!(state.stalling_timeout_state.is_none());
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
+
+        assert_matches!(player.state, Player::Stalling(_, 5));
         assert_matches!(
-            update_use_key_context(&context, &mut state, use_key),
-            Player::Stalling(_, 10)
-        );
-        assert_matches!(
-            state.stalling_timeout_state,
+            player.context.stalling_timeout_state,
             Some(Player::UseKey(UseKey {
-                stage: UseKeyStage::Using(_, false),
+                state: State::Using(_, _),
+                pending_transition: PendingTransition::None,
                 ..
             }))
-        );
-
-        // complete before stalling state and send key
-        assert_matches!(
-            update_non_positional_context(
-                state.stalling_timeout_state.take().unwrap(),
-                &context,
-                &mut state,
-                false
-            ),
-            Some(Player::Stalling(_, 20))
-        );
-        assert_matches!(
-            state.stalling_timeout_state,
-            Some(Player::UseKey(UseKey {
-                stage: UseKeyStage::Postcondition,
-                ..
-            }))
-        );
-
-        // complete after stalling state and return idle
-        assert_matches!(
-            update_non_positional_context(
-                state.stalling_timeout_state.take().unwrap(),
-                &context,
-                &mut state,
-                false
-            ),
-            Some(Player::Idle)
         );
     }
 
     #[test]
-    fn use_key_link_along() {
-        let mut state = PlayerState::default();
-        let mut context = Context::new(None, None);
+    fn update_use_key_state_waits_after() {
+        let mut keys = MockInput::new();
+        keys.expect_send_key()
+            .withf(|k| matches!(k, KeyKind::A))
+            .once();
+        let resources = Resources::new(Some(keys), None);
+        let use_key = UseKey {
+            key: KeyBinding::A,
+            link_key: None,
+            count: 1,
+            current_count: 0,
+            direction: ActionKeyDirection::Any,
+            with: ActionKeyWith::Any,
+            wait_before_use_ticks: 0,
+            wait_after_use_ticks: 7,
+            action_info: None,
+            state: State::Using(Timeout::default(), false),
+            pending_transition: PendingTransition::None,
+        };
+        let mut player = make_player(use_key);
+
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
+
+        assert_matches!(player.state, Player::Stalling(_, 7));
+        assert_matches!(
+            player.context.stalling_timeout_state,
+            Some(Player::UseKey(UseKey {
+                state: State::Postcondition,
+                pending_transition: PendingTransition::None,
+                ..
+            }))
+        );
+    }
+
+    #[test]
+    fn update_use_key_state_link_key_along() {
+        let mut sequence = Sequence::new();
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
+            .withf(|k| matches!(k, KeyKind::Alt))
+            .once()
+            .in_sequence(&mut sequence);
+        keys.expect_send_key()
+            .withf(|k| matches!(k, KeyKind::A))
+            .once()
+            .in_sequence(&mut sequence);
+        keys.expect_send_key_up()
+            .withf(|k| matches!(k, KeyKind::Alt))
+            .once()
+            .in_sequence(&mut sequence);
+        let resources = Resources::new(Some(keys), None);
         let mut use_key = UseKey {
             key: KeyBinding::A,
             link_key: Some(LinkKeyBinding::Along(KeyBinding::Alt)),
@@ -751,79 +840,194 @@ mod tests {
             wait_before_use_ticks: 0,
             wait_after_use_ticks: 0,
             action_info: None,
-            stage: UseKeyStage::Using(Timeout::default(), false),
+            state: State::Using(Timeout::default(), false),
+            pending_transition: PendingTransition::None,
         };
+        let mut player = make_player(use_key);
 
-        // Starts by holding down Alt key
-        let mut keys = MockInput::new();
-        keys.expect_send_key_down()
-            .withf(|key| matches!(key, KeyKind::Alt))
-            .once()
-            .return_once(|_| Ok(()));
-        context.input = Box::new(keys);
-        update_use_key_context(&context, &mut state, use_key);
-        let _ = context.input; // test check point by dropping
+        // Hold Alt
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
+        assert_matches!(
+            player.state,
+            Player::UseKey(UseKey {
+                state: State::Using(_, false),
+                ..
+            })
+        );
 
-        // Sends A at tick 2
+        // Press A
+        use_key.state = State::Using(
+            Timeout {
+                current: 1,
+                total: 1,
+                started: true,
+            },
+            false,
+        );
+        player = make_player(use_key);
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
+        assert_matches!(
+            player.state,
+            Player::UseKey(UseKey {
+                state: State::Using(_, false),
+                ..
+            })
+        );
+
+        // Release Alt
+        use_key.state = State::Using(
+            Timeout {
+                current: 4,
+                total: 4,
+                started: true,
+            },
+            false,
+        );
+        player = make_player(use_key);
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
+        assert_matches!(
+            player.state,
+            Player::UseKey(UseKey {
+                state: State::Using(_, true),
+                ..
+            })
+        );
+    }
+
+    #[test]
+    fn update_use_key_state_link_key_before() {
+        let mut sequence = Sequence::new();
         let mut keys = MockInput::new();
         keys.expect_send_key()
-            .withf(|key| matches!(key, KeyKind::A))
+            .withf(|k| matches!(k, KeyKind::Alt))
             .once()
-            .return_once(|_| Ok(()));
-        context.input = Box::new(keys);
-        use_key.stage = UseKeyStage::Using(
-            Timeout {
-                started: true,
-                total: 1,
-                current: 1,
-            },
-            false,
-        );
-        assert_matches!(
-            update_use_key_context(&context, &mut state, use_key),
-            Player::UseKey(UseKey {
-                stage: UseKeyStage::Using(
-                    Timeout {
-                        total: 2,
-                        current: 2,
-                        ..
-                    },
-                    false
-                ),
-                ..
-            })
-        );
-        let _ = context.input; // test check point by dropping
+            .in_sequence(&mut sequence);
+        keys.expect_send_key()
+            .withf(|k| matches!(k, KeyKind::A))
+            .once()
+            .in_sequence(&mut sequence);
+        let resources = Resources::new(Some(keys), None);
 
-        // Ends by releasing Alt
-        let mut keys = MockInput::new();
-        keys.expect_send_key_up()
-            .withf(|key| matches!(key, KeyKind::Alt))
-            .once()
-            .return_once(|_| Ok(()));
-        context.input = Box::new(keys);
-        use_key.stage = UseKeyStage::Using(
-            Timeout {
-                started: true,
-                total: 4,
-                current: 4,
-            },
-            false,
-        );
+        let mut use_key = UseKey {
+            key: KeyBinding::A,
+            link_key: Some(LinkKeyBinding::Before(KeyBinding::Alt)),
+            count: 1,
+            current_count: 0,
+            direction: ActionKeyDirection::Any,
+            with: ActionKeyWith::Any,
+            wait_before_use_ticks: 0,
+            wait_after_use_ticks: 0,
+            action_info: None,
+            state: State::Using(Timeout::default(), false),
+            pending_transition: PendingTransition::None,
+        };
+        let mut player = make_player(use_key);
+
+        // Press Alt
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
         assert_matches!(
-            update_use_key_context(&context, &mut state, use_key),
+            player.state,
             Player::UseKey(UseKey {
-                stage: UseKeyStage::Using(
-                    Timeout {
-                        total: 4,
-                        current: 4,
-                        ..
-                    },
-                    true
-                ),
+                state: State::Using(_, false),
                 ..
             })
         );
-        // test check point by dropping here
+
+        // Press A
+        use_key.state = State::Using(Timeout::default(), true);
+        player = make_player(use_key);
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
+    }
+
+    #[test]
+    fn update_use_key_state_link_key_after() {
+        let mut sequence = Sequence::new();
+        let mut keys = MockInput::new();
+        keys.expect_send_key()
+            .withf(|k| matches!(k, KeyKind::A))
+            .once()
+            .in_sequence(&mut sequence);
+        keys.expect_send_key()
+            .withf(|k| matches!(k, KeyKind::Alt))
+            .once()
+            .in_sequence(&mut sequence);
+        let resources = Resources::new(Some(keys), None);
+
+        let mut use_key = UseKey {
+            key: KeyBinding::A,
+            link_key: Some(LinkKeyBinding::After(KeyBinding::Alt)),
+            count: 1,
+            current_count: 0,
+            direction: ActionKeyDirection::Any,
+            with: ActionKeyWith::Any,
+            wait_before_use_ticks: 0,
+            wait_after_use_ticks: 0,
+            action_info: None,
+            state: State::Using(Timeout::default(), false),
+            pending_transition: PendingTransition::None,
+        };
+        let mut player = make_player(use_key);
+
+        // Press A
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
+        assert_matches!(
+            player.state,
+            Player::UseKey(UseKey {
+                state: State::Using(_, false),
+                ..
+            })
+        );
+
+        // Press Alt
+        use_key.state = State::Using(
+            Timeout {
+                current: 5, // Generic class
+                started: true,
+                ..Default::default()
+            },
+            false,
+        );
+        player = make_player(use_key);
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
+    }
+
+    #[test]
+    fn update_use_key_state_link_key_at_the_same() {
+        let mut sequence = Sequence::new();
+        let mut keys = MockInput::new();
+        keys.expect_send_key()
+            .withf(|k| matches!(k, KeyKind::Alt))
+            .once()
+            .in_sequence(&mut sequence);
+        keys.expect_send_key()
+            .withf(|k| matches!(k, KeyKind::A))
+            .once()
+            .in_sequence(&mut sequence);
+        let resources = Resources::new(Some(keys), None);
+
+        let use_key = UseKey {
+            key: KeyBinding::A,
+            link_key: Some(LinkKeyBinding::AtTheSame(KeyBinding::Alt)),
+            count: 1,
+            current_count: 0,
+            direction: ActionKeyDirection::Any,
+            with: ActionKeyWith::Any,
+            wait_before_use_ticks: 0,
+            wait_after_use_ticks: 0,
+            action_info: None,
+            state: State::Using(Timeout::default(), false),
+            pending_transition: PendingTransition::None,
+        };
+        let mut player = make_player(use_key);
+
+        // Press Alt then A
+        update_use_key_state(&resources, &mut player, Minimap::Detecting);
+        assert_matches!(
+            player.state,
+            Player::UseKey(UseKey {
+                state: State::Postcondition,
+                ..
+            })
+        );
     }
 }

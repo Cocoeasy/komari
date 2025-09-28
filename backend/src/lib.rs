@@ -26,11 +26,11 @@ mod array;
 mod bot;
 mod bridge;
 mod buff;
-mod context;
 mod database;
 #[cfg(debug_assertions)]
 mod debug;
 mod detect;
+mod ecs;
 mod mat;
 mod minimap;
 mod navigator;
@@ -40,12 +40,12 @@ mod player;
 mod rng;
 mod rotator;
 mod rpc;
+mod run;
 mod services;
 mod skill;
 mod task;
 
 pub use {
-    context::init,
     database::{
         Action, ActionCondition, ActionConfiguration, ActionConfigurationCondition, ActionKey,
         ActionKeyDirection, ActionKeyWith, ActionMove, Bound, CaptureMode, Character, Class,
@@ -56,6 +56,7 @@ pub use {
     },
     pathing::MAX_PLATFORMS_COUNT,
     rotator::RotatorMode,
+    run::init,
     strum::{EnumMessage, IntoEnumIterator, ParseError},
 };
 

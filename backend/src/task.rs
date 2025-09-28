@@ -8,7 +8,7 @@ use tokio::{
     time::sleep,
 };
 
-use crate::{context::Context, detect::Detector};
+use crate::{detect::Detector, ecs::Resources};
 
 /// An asynchronous task.
 ///
@@ -92,7 +92,7 @@ where
 
 #[inline]
 pub fn update_detection_task<F, T>(
-    context: &Context,
+    resources: &Resources,
     repeat_delay_millis: u64,
     task: &mut Option<Task<Result<T>>>,
     task_fn: F,
@@ -104,7 +104,7 @@ where
     update_task(
         repeat_delay_millis,
         task,
-        || context.detector_cloned_unwrap(),
+        || resources.detector_cloned(),
         task_fn,
     )
 }

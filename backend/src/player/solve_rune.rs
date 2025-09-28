@@ -1,20 +1,21 @@
 use super::{
-    Player, PlayerState,
+    Player,
     actions::PlayerAction,
     timeout::{Lifecycle, next_timeout_lifecycle},
 };
 use crate::{
     bridge::KeyKind,
-    context::Context,
     detect::{ArrowsCalibrating, ArrowsState},
-    player::{on_action_state_mut, timeout::Timeout},
+    ecs::Resources,
+    player::{PlayerContext, PlayerEntity, next_action, timeout::Timeout},
+    transition, transition_from_action, transition_if, try_ok_transition,
 };
 
 const MAX_RETRY_COUNT: u32 = 2;
 
-/// Representing the current stage of rune solving.
+/// Representing the current state of rune solving.
 #[derive(Debug, Default, Clone, Copy)]
-pub enum RuneStage {
+pub enum State {
     // Ensures stationary and all keys cleared before solving.
     #[default]
     Precondition,
@@ -30,241 +31,198 @@ pub enum RuneStage {
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct SolvingRune {
-    stage: RuneStage,
-}
-
-impl SolvingRune {
-    #[inline]
-    fn stage_precondition(self) -> SolvingRune {
-        SolvingRune {
-            stage: RuneStage::Precondition,
-        }
-    }
-
-    #[inline]
-    fn stage_find_region(
-        self,
-        calibrating: ArrowsCalibrating,
-        timeout: Timeout,
-        cooldown_timeout: Option<Timeout>,
-        retry_count: u32,
-    ) -> SolvingRune {
-        SolvingRune {
-            stage: RuneStage::FindRegion(calibrating, timeout, cooldown_timeout, retry_count),
-        }
-    }
-
-    #[inline]
-    fn stage_solving(self, calibrating: ArrowsCalibrating, timeout: Timeout) -> SolvingRune {
-        SolvingRune {
-            stage: RuneStage::Solving(calibrating, timeout),
-        }
-    }
-
-    #[inline]
-    fn stage_press_keys(
-        self,
-        timeout: Timeout,
-        keys: [KeyKind; 4],
-        key_index: usize,
-    ) -> SolvingRune {
-        SolvingRune {
-            stage: RuneStage::PressKeys(timeout, keys, key_index),
-        }
-    }
-
-    #[inline]
-    fn stage_completed(self) -> SolvingRune {
-        SolvingRune {
-            stage: RuneStage::Completed,
-        }
-    }
+    state: State,
 }
 
 /// Updates the [`Player::SolvingRune`] contextual state.
 ///
 /// Note: This state does not use any [`Task`], so all detections are blocking. But this should be
 /// acceptable for this state.
-pub fn update_solving_rune_context(
-    context: &Context,
-    state: &mut PlayerState,
-    solving_rune: SolvingRune,
-) -> Player {
-    let solving_rune = match solving_rune.stage {
-        RuneStage::Precondition => {
-            if !state.is_stationary || !context.input.all_keys_cleared() {
-                solving_rune.stage_precondition()
-            } else {
-                solving_rune.stage_find_region(
-                    ArrowsCalibrating::default(),
-                    Timeout::default(),
-                    None,
-                    0,
-                )
-            }
-        }
-        RuneStage::FindRegion(calibrating, timeout, cooldown_timeout, retry_count) => {
-            update_find_region(
-                context,
-                solving_rune,
-                state.config.interact_key,
-                calibrating,
-                timeout,
-                cooldown_timeout,
-                retry_count,
-            )
-        }
-        RuneStage::Solving(calibrating, timeout) => {
-            update_solving(context, solving_rune, calibrating, timeout)
-        }
-        RuneStage::PressKeys(timeout, keys, key_index) => {
-            update_press_keys(context, solving_rune, timeout, keys, key_index)
-        }
-        RuneStage::Completed => unreachable!(),
+pub fn update_solving_rune_state(resources: &Resources, player: &mut PlayerEntity) {
+    let Player::SolvingRune(mut solving_rune) = player.state else {
+        panic!("state is not solving rune");
     };
-    let next = if matches!(solving_rune.stage, RuneStage::Completed) {
+
+    match solving_rune.state {
+        State::Precondition => update_precondition(resources, &player.context, &mut solving_rune),
+        State::FindRegion(_, _, _, _) => update_find_region(
+            resources,
+            &mut solving_rune,
+            player.context.config.interact_key,
+        ),
+        State::Solving(_, _) => update_solving(resources, &mut solving_rune),
+        State::PressKeys(_, _, _) => update_press_keys(resources, &mut solving_rune),
+        State::Completed => unreachable!(),
+    }
+
+    let player_next_state = if matches!(solving_rune.state, State::Completed) {
         Player::Idle
     } else {
         Player::SolvingRune(solving_rune)
     };
 
-    on_action_state_mut(
-        state,
-        |state, action| match action {
-            PlayerAction::SolveRune => {
-                let is_terminal = matches!(next, Player::Idle);
-                if is_terminal {
-                    state.start_validating_rune();
-                }
-                Some((next, is_terminal))
+    match next_action(&player.context) {
+        Some(PlayerAction::SolveRune) => {
+            let is_terminal = matches!(player_next_state, Player::Idle);
+            if is_terminal {
+                player.context.start_validating_rune();
             }
-            _ => unreachable!(),
-        },
-        || Player::Idle, // Force cancel if not initiated from action
+            transition_from_action!(player, player_next_state, is_terminal)
+        }
+        Some(_) => unreachable!(),
+        None => transition!(player, Player::Idle), // Force cancel if not from action
+    }
+}
+
+fn update_precondition(
+    resources: &Resources,
+    player_context: &PlayerContext,
+    solving_rune: &mut SolvingRune,
+) {
+    transition_if!(
+        solving_rune,
+        State::FindRegion(ArrowsCalibrating::default(), Timeout::default(), None, 0),
+        State::Precondition,
+        player_context.is_stationary && resources.input.all_keys_cleared()
     )
 }
 
 fn update_find_region(
-    context: &Context,
-    solving_rune: SolvingRune,
+    resources: &Resources,
+    solving_rune: &mut SolvingRune,
     interact_key: KeyKind,
-    calibrating: ArrowsCalibrating,
-    timeout: Timeout,
-    cooldown_timeout: Option<Timeout>,
-    retry_count: u32,
-) -> SolvingRune {
+) {
     const COOLDOWN_AND_SOLVE_TIMEOUT: u32 = 125;
     const SOLVE_INTERVAL: u32 = 15;
+
+    let State::FindRegion(calibrating, timeout, cooldown_timeout, retry_count) = solving_rune.state
+    else {
+        panic!("solving rune state is not finding region")
+    };
 
     // cooldown_timeout is used to wait for rune cooldown around ~4 secs before hitting interact
     // key again.
     if let Some(cooldown_timeout) = cooldown_timeout {
-        return match next_timeout_lifecycle(cooldown_timeout, COOLDOWN_AND_SOLVE_TIMEOUT) {
+        match next_timeout_lifecycle(cooldown_timeout, COOLDOWN_AND_SOLVE_TIMEOUT) {
             Lifecycle::Updated(cooldown_timeout) | Lifecycle::Started(cooldown_timeout) => {
-                solving_rune.stage_find_region(
-                    calibrating,
-                    timeout,
-                    Some(cooldown_timeout),
-                    retry_count,
+                transition!(
+                    solving_rune,
+                    State::FindRegion(calibrating, timeout, Some(cooldown_timeout), retry_count)
                 )
             }
-            Lifecycle::Ended => {
-                solving_rune.stage_find_region(calibrating, timeout, None, retry_count)
-            }
+            Lifecycle::Ended => transition!(
+                solving_rune,
+                State::FindRegion(calibrating, timeout, None, retry_count)
+            ),
         };
     }
 
     debug_assert!(cooldown_timeout.is_none());
     match next_timeout_lifecycle(timeout, COOLDOWN_AND_SOLVE_TIMEOUT) {
-        Lifecycle::Started(timeout) => {
-            let _ = context.input.send_key(interact_key);
-            solving_rune.stage_find_region(calibrating, timeout, cooldown_timeout, retry_count)
-        }
-        Lifecycle::Ended => {
-            if retry_count < MAX_RETRY_COUNT {
-                // Retry possibly because mis-pressing the interact key
-                solving_rune.stage_find_region(
-                    ArrowsCalibrating::default(),
-                    Timeout::default(),
-                    Some(Timeout::default()),
-                    retry_count + 1,
-                )
-            } else {
-                solving_rune.stage_completed()
+        Lifecycle::Started(timeout) => transition!(
+            solving_rune,
+            State::FindRegion(calibrating, timeout, cooldown_timeout, retry_count),
+            {
+                resources.input.send_key(interact_key);
             }
-        }
+        ),
+        Lifecycle::Ended => transition_if!(
+            solving_rune,
+            State::FindRegion(
+                ArrowsCalibrating::default(),
+                Timeout::default(),
+                Some(Timeout::default()),
+                retry_count + 1
+            ),
+            State::Completed,
+            retry_count < MAX_RETRY_COUNT
+        ),
         Lifecycle::Updated(timeout) => {
             if timeout.current.is_multiple_of(SOLVE_INTERVAL) {
-                match context.detector_unwrap().detect_rune_arrows(calibrating) {
-                    Ok(ArrowsState::Calibrating(calibrating)) => {
-                        return solving_rune.stage_solving(calibrating, Timeout::default());
-                    }
-                    Ok(ArrowsState::Complete(_)) => unreachable!(),
-                    Err(_) => {
-                        return solving_rune.stage_find_region(
-                            ArrowsCalibrating::default(),
-                            timeout,
-                            cooldown_timeout,
-                            retry_count,
-                        );
-                    }
+                let arrows_state = try_ok_transition!(
+                    solving_rune,
+                    State::FindRegion(
+                        ArrowsCalibrating::default(),
+                        timeout,
+                        cooldown_timeout,
+                        retry_count
+                    ),
+                    resources.detector().detect_rune_arrows(calibrating)
+                );
+                match arrows_state {
+                    ArrowsState::Calibrating(calibrating) => transition!(
+                        solving_rune,
+                        State::Solving(calibrating, Timeout::default())
+                    ),
+                    ArrowsState::Complete(_) => unreachable!(),
                 }
             }
 
-            solving_rune.stage_find_region(calibrating, timeout, cooldown_timeout, retry_count)
+            transition!(
+                solving_rune,
+                State::FindRegion(calibrating, timeout, cooldown_timeout, retry_count)
+            );
         }
     }
 }
 
-fn update_solving(
-    context: &Context,
-    solving_rune: SolvingRune,
-    calibrating: ArrowsCalibrating,
-    timeout: Timeout,
-) -> SolvingRune {
+fn update_solving(resources: &Resources, solving_rune: &mut SolvingRune) {
+    let State::Solving(calibrating, timeout) = solving_rune.state else {
+        panic!("solving rune state is not solving")
+    };
+
     match next_timeout_lifecycle(timeout, 150) {
-        Lifecycle::Started(timeout) => solving_rune.stage_solving(calibrating, timeout),
-        Lifecycle::Ended => solving_rune.stage_completed(),
+        Lifecycle::Started(timeout) => {
+            transition!(solving_rune, State::Solving(calibrating, timeout))
+        }
+        Lifecycle::Ended => transition!(solving_rune, State::Completed),
         Lifecycle::Updated(timeout) => {
-            match context.detector_unwrap().detect_rune_arrows(calibrating) {
-                Ok(ArrowsState::Calibrating(calibrating)) => {
-                    solving_rune.stage_solving(calibrating, timeout)
+            let arrows_state = try_ok_transition!(
+                solving_rune,
+                State::Completed,
+                resources.detector().detect_rune_arrows(calibrating)
+            );
+            match arrows_state {
+                ArrowsState::Calibrating(calibrating) => {
+                    transition!(solving_rune, State::Solving(calibrating, timeout))
                 }
-                Ok(ArrowsState::Complete(pairs)) => {
-                    #[cfg(debug_assertions)]
-                    context
-                        .debug
-                        .set_last_rune_result(context.detector_cloned_unwrap(), pairs);
-                    solving_rune.stage_press_keys(Timeout::default(), pairs.map(|(_, key)| key), 0)
-                }
-                Err(_) => solving_rune.stage_completed(),
+                ArrowsState::Complete(pairs) => transition!(
+                    solving_rune,
+                    State::PressKeys(Timeout::default(), pairs.map(|(_, key)| key), 0),
+                    {
+                        #[cfg(debug_assertions)]
+                        resources
+                            .debug
+                            .set_last_rune_result(resources.detector_cloned(), pairs);
+                    }
+                ),
             }
         }
     }
 }
 
-fn update_press_keys(
-    context: &Context,
-    solving_rune: SolvingRune,
-    timeout: Timeout,
-    keys: [KeyKind; 4],
-    key_index: usize,
-) -> SolvingRune {
+fn update_press_keys(resources: &Resources, solving_rune: &mut SolvingRune) {
     const PRESS_KEY_INTERVAL: u32 = 8;
+
+    let State::PressKeys(timeout, keys, key_index) = solving_rune.state else {
+        panic!("solving rune state is not pressing keys")
+    };
 
     match next_timeout_lifecycle(timeout, PRESS_KEY_INTERVAL) {
         Lifecycle::Started(timeout) => {
-            let _ = context.input.send_key(keys[key_index]);
-            solving_rune.stage_press_keys(timeout, keys, key_index)
+            transition!(solving_rune, State::PressKeys(timeout, keys, key_index), {
+                resources.input.send_key(keys[key_index]);
+            })
         }
-        Lifecycle::Ended => {
-            if key_index + 1 < keys.len() {
-                solving_rune.stage_press_keys(Timeout::default(), keys, key_index + 1)
-            } else {
-                solving_rune.stage_completed()
-            }
+        Lifecycle::Ended => transition_if!(
+            solving_rune,
+            State::PressKeys(Timeout::default(), keys, key_index + 1),
+            State::Completed,
+            key_index + 1 < keys.len()
+        ),
+        Lifecycle::Updated(timeout) => {
+            transition!(solving_rune, State::PressKeys(timeout, keys, key_index))
         }
-        Lifecycle::Updated(timeout) => solving_rune.stage_press_keys(timeout, keys, key_index),
     }
 }
 
@@ -278,27 +236,31 @@ mod tests {
 
     use super::*;
     use crate::{
-        bridge::MockInput,
-        context::Context,
+        bridge::{KeyKind, MockInput},
         detect::{ArrowsCalibrating, ArrowsState, MockDetector},
+        ecs::Resources,
+        player::{Player, PlayerContext, PlayerEntity},
     };
 
     #[test]
-    fn update_solving_rune_context_precondition_to_find_region_when_stationary_and_keys_cleared() {
+    fn update_solving_rune_precondition_to_find_region_when_stationary_and_keys_cleared() {
         let mut keys = MockInput::default();
         keys.expect_all_keys_cleared().once().returning(|| true);
-        let context = Context::new(Some(keys), None);
-        let solving_rune = SolvingRune::default().stage_precondition();
-        let mut state = PlayerState::default();
-        state.priority_action = Some(PlayerAction::SolveRune); // Avoid cancellation
-        state.is_stationary = true;
+        let resources = Resources::new(Some(keys), None);
 
-        let result = update_solving_rune_context(&context, &mut state, solving_rune);
+        let mut player = PlayerEntity {
+            state: Player::SolvingRune(SolvingRune::default()),
+            context: PlayerContext::default(),
+        };
+        player.context.priority_action = Some(PlayerAction::SolveRune); // Avoid cancellation
+        player.context.is_stationary = true;
+
+        update_solving_rune_state(&resources, &mut player);
 
         assert_matches!(
-            result,
+            player.state,
             Player::SolvingRune(SolvingRune {
-                stage: RuneStage::FindRegion(_, _, None, 0)
+                state: State::FindRegion(_, _, None, 0)
             })
         );
     }
@@ -309,114 +271,87 @@ mod tests {
         detector
             .expect_detect_rune_arrows()
             .return_once(|_| Ok(ArrowsState::Calibrating(ArrowsCalibrating::default())));
-        let context = Context::new(None, Some(detector));
-        let solving_rune = SolvingRune::default().stage_find_region(
-            ArrowsCalibrating::default(),
-            Timeout::default(),
-            None,
-            0,
-        );
+        let resources = Resources::new(None, Some(detector));
+        let mut solving_rune = SolvingRune {
+            state: State::FindRegion(
+                ArrowsCalibrating::default(),
+                Timeout {
+                    started: true,
+                    current: 89,
+                    ..Default::default()
+                },
+                None,
+                0,
+            ),
+        };
 
-        let result = update_find_region(
-            &context,
-            solving_rune,
-            KeyKind::A,
-            ArrowsCalibrating::default(),
-            Timeout {
-                started: true,
-                current: 89,
-                ..Default::default()
-            },
-            None,
-            0,
-        );
+        update_find_region(&resources, &mut solving_rune, KeyKind::A);
 
         assert_matches!(
-            result,
-            SolvingRune {
-                stage: RuneStage::Solving(
-                    _,
-                    Timeout {
-                        started: false,
-                        current: 0,
-                        ..
-                    },
-                )
-            }
+            solving_rune.state,
+            State::Solving(
+                _,
+                Timeout {
+                    started: false,
+                    current: 0,
+                    ..
+                }
+            )
         );
     }
 
     #[test]
-    fn update_find_region_retry() {
+    fn update_find_region_retry_on_timeout() {
         let mut detector = MockDetector::default();
         detector
             .expect_detect_rune_arrows()
             .return_once(move |_| Err(anyhow!("rune region not found")));
-        let context = Context::new(None, Some(detector));
-        let solving_rune = SolvingRune::default().stage_find_region(
-            ArrowsCalibrating::default(),
-            Timeout::default(),
-            None,
-            0,
-        );
+        let resources = Resources::new(None, Some(detector));
+        let mut solving_rune = SolvingRune {
+            state: State::FindRegion(
+                ArrowsCalibrating::default(),
+                Timeout {
+                    started: true,
+                    current: 125,
+                    ..Default::default()
+                },
+                None,
+                0,
+            ),
+        };
 
-        let result = update_find_region(
-            &context,
-            solving_rune,
-            KeyKind::A,
-            ArrowsCalibrating::default(),
-            Timeout {
-                started: true,
-                current: 125,
-                ..Default::default()
-            },
-            None,
-            0,
-        );
+        update_find_region(&resources, &mut solving_rune, KeyKind::A);
 
         assert_matches!(
-            result,
-            SolvingRune {
-                stage: RuneStage::FindRegion(
-                    _,
-                    Timeout { started: false, .. },
-                    Some(Timeout { started: false, .. }),
-                    1
-                )
-            }
+            solving_rune.state,
+            State::FindRegion(
+                _,
+                Timeout { started: false, .. },
+                Some(Timeout { started: false, .. }),
+                1
+            )
         );
     }
 
     #[test]
     fn update_find_region_retry_cooldown_timeout_to_none() {
-        let context = Context::new(None, None);
-        let solving_rune = SolvingRune::default().stage_find_region(
-            ArrowsCalibrating::default(),
-            Timeout::default(),
-            None,
-            0,
-        );
+        let resources = Resources::new(None, None);
+        let mut solving_rune = SolvingRune {
+            state: State::FindRegion(
+                ArrowsCalibrating::default(),
+                Timeout::default(),
+                Some(Timeout {
+                    started: true,
+                    current: 125,
+                    ..Default::default()
+                }),
+                1,
+            ),
+        };
 
-        let result = update_find_region(
-            &context,
-            solving_rune,
-            KeyKind::A,
-            ArrowsCalibrating::default(),
-            Timeout::default(),
-            Some(Timeout {
-                started: true,
-                current: 125,
-                ..Default::default()
-            }),
-            1,
-        );
+        update_find_region(&resources, &mut solving_rune, KeyKind::A);
 
-        assert_matches!(
-            result,
-            SolvingRune {
-                stage: RuneStage::FindRegion(_, _, None, 1)
-            }
-        );
+        assert_matches!(solving_rune.state, State::FindRegion(_, _, None, 1));
     }
 
     #[test]
@@ -424,27 +359,21 @@ mod tests {
         let mut detector = MockDetector::default();
         detector
             .expect_detect_rune_arrows()
-            .returning(|_| Err(anyhow::anyhow!("fail")));
-        let context = Context::new(None, Some(detector));
-        let solving_rune =
-            SolvingRune::default().stage_solving(ArrowsCalibrating::default(), Timeout::default());
+            .returning(|_| Err(anyhow!("fail")));
+        let resources = Resources::new(None, Some(detector));
+        let mut solving_rune = SolvingRune {
+            state: State::Solving(
+                ArrowsCalibrating::default(),
+                Timeout {
+                    started: true,
+                    ..Default::default()
+                },
+            ),
+        };
 
-        let result = update_solving(
-            &context,
-            solving_rune,
-            ArrowsCalibrating::default(),
-            Timeout {
-                started: true,
-                ..Default::default()
-            },
-        );
+        update_solving(&resources, &mut solving_rune);
 
-        assert_matches!(
-            result,
-            SolvingRune {
-                stage: RuneStage::Completed
-            }
-        );
+        assert_matches!(solving_rune.state, State::Completed);
     }
 
     #[test]
@@ -453,25 +382,22 @@ mod tests {
         detector
             .expect_detect_rune_arrows()
             .return_once(move |_| Ok(ArrowsState::Calibrating(ArrowsCalibrating::default())));
-        let context = Context::new(None, Some(detector));
-        let solving_rune =
-            SolvingRune::default().stage_solving(ArrowsCalibrating::default(), Timeout::default());
+        let resources = Resources::new(None, Some(detector));
+        let mut solving_rune = SolvingRune {
+            state: State::Solving(
+                ArrowsCalibrating::default(),
+                Timeout {
+                    started: true,
+                    ..Default::default()
+                },
+            ),
+        };
 
-        let result = update_solving(
-            &context,
-            solving_rune,
-            ArrowsCalibrating::default(),
-            Timeout {
-                started: true,
-                ..Default::default()
-            },
-        );
+        update_solving(&resources, &mut solving_rune);
 
         assert_matches!(
-            result,
-            SolvingRune {
-                stage: RuneStage::Solving(_, Timeout { started: true, .. })
-            }
+            solving_rune.state,
+            State::Solving(_, Timeout { started: true, .. })
         );
     }
 
@@ -488,83 +414,61 @@ mod tests {
         detector
             .expect_detect_rune_arrows()
             .return_once(move |_| Ok(ArrowsState::Complete(expected_keys)));
-        let context = Context::new(None, Some(detector));
-        let solving_rune =
-            SolvingRune::default().stage_solving(ArrowsCalibrating::default(), Timeout::default());
+        let resources = Resources::new(None, Some(detector));
+        let mut solving_rune = SolvingRune {
+            state: State::Solving(
+                ArrowsCalibrating::default(),
+                Timeout {
+                    started: true,
+                    ..Default::default()
+                },
+            ),
+        };
 
-        let result = update_solving(
-            &context,
-            solving_rune,
-            ArrowsCalibrating::default(),
-            Timeout {
-                started: true,
-                ..Default::default()
-            },
-        );
+        update_solving(&resources, &mut solving_rune);
 
         assert_matches!(
-            result,
-            SolvingRune {
-                stage: RuneStage::PressKeys(
-                    Timeout {
-                        started: false,
-                        current: 0,
-                        ..
-                    },
-                    [KeyKind::A, KeyKind::S, KeyKind::D, KeyKind::F],
-                    0
-                )
-            }
+            solving_rune.state,
+            State::PressKeys(
+                Timeout {
+                    started: false,
+                    current: 0,
+                    ..
+                },
+                [KeyKind::A, KeyKind::S, KeyKind::D, KeyKind::F],
+                0
+            )
         );
     }
 
     #[test]
     fn update_press_keys_to_completed_after_all_keys_sent() {
         let expected_keys = [KeyKind::A, KeyKind::S, KeyKind::D, KeyKind::F];
-        let mut key_index = 0;
+        let mut solving_rune = SolvingRune {
+            state: State::PressKeys(Timeout::default(), expected_keys, 0),
+        };
 
-        // Simulate 4 rounds of key pressing
-        for _ in 0..4 {
+        for idx in 0..expected_keys.len() {
             let mut keys = MockInput::default();
-            keys.expect_send_key()
-                .with(eq(expected_keys[key_index]))
-                .return_once(|_| Ok(()));
-            let context = Context::new(Some(keys), None);
+            keys.expect_send_key().with(eq(expected_keys[idx]));
+            let resources = Resources::new(Some(keys), None);
 
-            // Press the key
-            update_press_keys(
-                &context,
-                SolvingRune::default(),
-                Timeout::default(),
-                expected_keys,
-                key_index,
-            );
-            // Timing out and advance key index or complete
-            let end_result = update_press_keys(
-                &context,
-                SolvingRune::default(),
+            // Start key press
+            update_press_keys(&resources, &mut solving_rune);
+
+            // Simulate timeout end (advance or complete)
+            solving_rune.state = State::PressKeys(
                 Timeout {
-                    current: 8,
                     started: true,
+                    current: 8,
                     ..Default::default()
                 },
                 expected_keys,
-                key_index,
+                idx,
             );
-
-            if key_index == expected_keys.len() - 1 {
-                assert_matches!(
-                    end_result,
-                    SolvingRune {
-                        stage: RuneStage::Completed
-                    }
-                );
-            } else {
-                key_index = match end_result.stage {
-                    RuneStage::PressKeys(_, _, index) => index,
-                    _ => unreachable!(),
-                }
-            }
+            update_press_keys(&resources, &mut solving_rune);
         }
+
+        assert_matches!(solving_rune.state, State::Completed);
     }
 }

@@ -14,8 +14,8 @@ use crate::{
     ActionKeyDirection, Class,
     array::Array,
     bridge::{KeyKind, MouseKind},
-    buff::{Buff, BuffKind},
-    context::Context,
+    buff::{Buff, BuffEntities, BuffKind},
+    ecs::Resources,
     minimap::Minimap,
     notification::NotificationKind,
     player::{AUTO_MOB_USE_KEY_X_THRESHOLD, AUTO_MOB_USE_KEY_Y_THRESHOLD, AutoMob},
@@ -194,7 +194,7 @@ impl Default for PlayerConfiguration {
 /// TODO: Counter should not be u32 but usize?
 /// TODO: Reduce visibility to private for complex states
 #[derive(Debug, Default)]
-pub struct PlayerState {
+pub struct PlayerContext {
     pub config: PlayerConfiguration,
 
     /// Optional id of current normal action provided by [`Rotator`].
@@ -241,12 +241,6 @@ pub struct PlayerState {
     /// It is updated to latest current position on each tick.
     pub last_known_pos: Option<Point>,
 
-    /// Indicates whether to use [`ControlFlow::Immediate`] on this update.
-    pub(super) use_immediate_control_flow: bool,
-    /// Indicates whether to ignore update_pos and use last_known_pos on next update.
-    ///
-    /// This is true whenever [`Self::use_immediate_control_flow`] is true.
-    pub(super) ignore_pos_update: bool,
     /// Indicates whether to reset the contextual state back to [`Player::Idle`] on next update.
     ///
     /// This is true each time player receives [`PlayerAction`].
@@ -293,8 +287,6 @@ pub struct PlayerState {
     ///
     /// Resets when threshold reached or position changed.
     unstuck_transitioned_count: u32,
-    /// Unstuck task for detecting settings when mis-pressing ESC key.
-    pub(super) unstuck_task: Option<Task<Result<bool>>>,
 
     /// The number of times [`Player::SolvingRune`] failed.
     rune_failed_count: u32,
@@ -317,16 +309,16 @@ pub struct PlayerState {
     pub(super) velocity: (f32, f32),
 }
 
-impl PlayerState {
+impl PlayerContext {
     /// Resets the player state except for configuration.
     ///
     /// Used whenever minimap data or configuration changes.
     #[inline]
     pub fn reset(&mut self) {
-        *self = PlayerState {
+        *self = PlayerContext {
             config: self.config,
             reset_to_idle_next_update: true,
-            ..PlayerState::default()
+            ..PlayerContext::default()
         };
     }
 
@@ -646,7 +638,11 @@ impl PlayerState {
     /// Whether to use key when auto mob is currently pathing.
     ///
     /// TODO: Add unit tests
-    pub(super) fn auto_mob_pathing_should_use_key(&mut self, context: &Context) -> bool {
+    pub(super) fn auto_mob_pathing_should_use_key(
+        &mut self,
+        resources: &Resources,
+        minimap_state: Minimap,
+    ) -> bool {
         const USE_KEY_Y_RANGE: i32 = AUTO_MOB_USE_KEY_Y_THRESHOLD + 4;
 
         if !self.config.auto_mob_use_key_when_pathing {
@@ -662,13 +658,13 @@ impl PlayerState {
             return false;
         }
 
-        let minimap_bbox = match context.minimap {
+        let minimap_bbox = match minimap_state {
             Minimap::Idle(idle) => idle.bbox,
             Minimap::Detecting => return false,
         };
-        let pos = self.last_known_pos.expect("in positional context");
+        let pos = self.last_known_pos.expect("in positional state");
         let Update::Ok(points) = update_detection_task(
-            context,
+            resources,
             self.config.auto_mob_use_key_when_pathing_update_millis,
             &mut self.auto_mob_pathing_task,
             move |detector| {
@@ -693,7 +689,12 @@ impl PlayerState {
             .filter_map(|point| {
                 let y = minimap_bbox.height - point.y;
                 let point = Point::new(point.x, y);
-                self.auto_mob_pick_reachable_y_position_inner(context, point, false)
+                self.auto_mob_pick_reachable_y_position_inner(
+                    resources,
+                    minimap_state,
+                    point,
+                    false,
+                )
             })
             .any(|point| {
                 let within_x_range = (point.x - pos.x).abs() <= AUTO_MOB_USE_KEY_X_THRESHOLD;
@@ -714,7 +715,12 @@ impl PlayerState {
     ///
     /// The returned [`Point`] is in player coordinate relative to bottom-left.
     #[inline]
-    pub fn auto_mob_pathing_point(&mut self, context: &Context, bound: Rect) -> Point {
+    pub fn auto_mob_pathing_point(
+        &mut self,
+        resources: &Resources,
+        minimap_state: Minimap,
+        bound: Rect,
+    ) -> Point {
         #[inline]
         fn quadrant_bound(quadrant: Quadrant, bound: Rect) -> Rect {
             let bound_width_half = bound.width / 2;
@@ -741,7 +747,7 @@ impl PlayerState {
             }
         }
 
-        let (bbox, platforms) = match context.minimap {
+        let (bbox, platforms) = match minimap_state {
             Minimap::Idle(idle) => (idle.bbox, idle.platforms),
             _ => unreachable!(),
         };
@@ -788,7 +794,7 @@ impl PlayerState {
 
         // Use a random platform inside the next quadrant bound if any
         if !platforms.is_empty() {
-            let platform = context
+            let platform = resources
                 .rng
                 .random_choose(platforms.iter().filter(|platform| {
                     let xs = platform.xs();
@@ -801,12 +807,12 @@ impl PlayerState {
                 let xs_overlap =
                     bound_xs.start.max(platform.xs().start)..bound_xs.end.min(platform.xs().end);
 
-                return Point::new(context.rng.random_range(xs_overlap), platform.y());
+                return Point::new(resources.rng.random_range(xs_overlap), platform.y());
             }
         }
 
-        let x = context.rng.random_range(bound_xs);
-        let y = context
+        let x = resources.rng.random_range(bound_xs);
+        let y = resources
             .rng
             .random_choose(
                 self.auto_mob_reachable_y_map
@@ -820,7 +826,7 @@ impl PlayerState {
                         }
                     }),
             )
-            .unwrap_or(bbox.height - context.rng.random_range(bound_ys));
+            .unwrap_or(bbox.height - resources.rng.random_range(bound_ys));
 
         Point::new(x, y)
     }
@@ -843,20 +849,22 @@ impl PlayerState {
     /// [`None`] indicating this mob position should be dropped.
     pub fn auto_mob_pick_reachable_y_position(
         &mut self,
-        context: &Context,
+        resources: &Resources,
+        minimap_state: Minimap,
         mob_pos: Point,
     ) -> Option<Point> {
-        self.auto_mob_pick_reachable_y_position_inner(context, mob_pos, true)
+        self.auto_mob_pick_reachable_y_position_inner(resources, minimap_state, mob_pos, true)
     }
 
     fn auto_mob_pick_reachable_y_position_inner(
         &mut self,
-        context: &Context,
+        resources: &Resources,
+        minimap_state: Minimap,
         mob_pos: Point,
         bound_to_quads: bool,
     ) -> Option<Point> {
         if self.auto_mob_reachable_y_map.is_empty() {
-            self.auto_mob_populate_reachable_y(context);
+            self.auto_mob_populate_reachable_y(minimap_state);
         }
         debug_assert!(!self.auto_mob_reachable_y_map.is_empty());
 
@@ -865,7 +873,7 @@ impl PlayerState {
             .keys()
             .copied()
             .filter(|y| (mob_pos.y - y).abs() <= AUTO_MOB_REACHABLE_Y_THRESHOLD);
-        let y = context.rng.random_choose(ys);
+        let y = resources.rng.random_choose(ys);
 
         // Checking whether y is solidified yet is not needed because y will only be added
         // to the xs map when it is solidified. As for populated xs from platforms, the
@@ -896,8 +904,8 @@ impl PlayerState {
         }
     }
 
-    fn auto_mob_populate_reachable_y(&mut self, context: &Context) {
-        match context.minimap {
+    fn auto_mob_populate_reachable_y(&mut self, minimap_state: Minimap) {
+        match minimap_state {
             Minimap::Idle(idle) => {
                 // Believes in user input lets goo...
                 for platform in idle.platforms {
@@ -946,12 +954,12 @@ impl PlayerState {
 
     /// Tracks whether to ignore a x range for the current reachable y.
     // TODO: This tracking currently does not clamp to bound, should clamp to non-negative
-    pub(super) fn auto_mob_track_ignore_xs(&mut self, context: &Context, is_aborted: bool) {
+    pub(super) fn auto_mob_track_ignore_xs(&mut self, minimap_state: Minimap, is_aborted: bool) {
         if !self.has_auto_mob_action_only() {
             return;
         }
         if self.auto_mob_ignore_xs_map.is_empty() {
-            self.auto_mob_populate_ignore_xs(context);
+            self.auto_mob_populate_ignore_xs(minimap_state);
         }
 
         let (x, y) = match self.normal_action.clone().unwrap() {
@@ -1026,8 +1034,8 @@ impl PlayerState {
         }
     }
 
-    pub(super) fn auto_mob_populate_ignore_xs(&mut self, context: &Context) {
-        let (platforms, minimap_width) = match context.minimap {
+    pub(super) fn auto_mob_populate_ignore_xs(&mut self, minimap_state: Minimap) {
+        let (platforms, minimap_width) = match minimap_state {
             Minimap::Idle(idle) => (idle.platforms, idle.bbox.width),
             Minimap::Detecting => unreachable!(),
         };
@@ -1077,11 +1085,17 @@ impl PlayerState {
     /// [`PlayerState::unstuck_counter`] and [`PlayerState::unstuck_consecutive_counter`] when the
     /// player position changes.
     #[inline]
-    pub(super) fn update_state(&mut self, context: &Context) -> bool {
-        if self.update_position_state(context) {
-            self.update_health_state(context);
-            self.update_rune_validating_state(context);
-            self.update_is_dead_state(context);
+    pub(super) fn update_state(
+        &mut self,
+        resources: &Resources,
+        player_state: Player,
+        minimap_state: Minimap,
+        buffs: &BuffEntities,
+    ) -> bool {
+        if self.update_position_state(resources, minimap_state) {
+            self.update_health_state(resources, player_state);
+            self.update_rune_validating_state(resources, buffs);
+            self.update_is_dead_state(resources);
             true
         } else {
             false
@@ -1094,12 +1108,12 @@ impl PlayerState {
     /// OpenCV top-left coordinate but flipped to bottom-left by subtracting the minimap height
     /// with the y position. This is more intuitive both for the UI and development experience.
     #[inline]
-    fn update_position_state(&mut self, context: &Context) -> bool {
-        let minimap_bbox = match &context.minimap {
+    fn update_position_state(&mut self, resources: &Resources, minimap_state: Minimap) -> bool {
+        let minimap_bbox = match &minimap_state {
             Minimap::Detecting => return false,
             Minimap::Idle(idle) => idle.bbox,
         };
-        let Ok(player_bbox) = context.detector_unwrap().detect_player(minimap_bbox) else {
+        let Ok(player_bbox) = resources.detector().detect_player(minimap_bbox) else {
             return false;
         };
         let tl = player_bbox.tl();
@@ -1118,7 +1132,7 @@ impl PlayerState {
             self.unstuck_transitioned_count = 0;
             self.is_stationary_timeout = Timeout::default();
         }
-        self.update_velocity(pos, context.tick);
+        self.update_velocity(pos, resources.tick);
 
         let (is_stationary, is_stationary_timeout) =
             match next_timeout_lifecycle(self.is_stationary_timeout, MOVE_TIMEOUT) {
@@ -1181,7 +1195,7 @@ impl PlayerState {
     /// successfully detects and sends all the keys. After about 12 seconds, it
     /// will check if the player has the rune buff.
     #[inline]
-    fn update_rune_validating_state(&mut self, context: &Context) {
+    fn update_rune_validating_state(&mut self, resources: &Resources, buffs: &BuffEntities) {
         const VALIDATE_TIMEOUT: u32 = 375;
 
         debug_assert!(self.rune_failed_count < MAX_RUNE_FAILED_COUNT);
@@ -1189,12 +1203,12 @@ impl PlayerState {
         self.rune_validate_timeout = self.rune_validate_timeout.and_then(|timeout| {
             match next_timeout_lifecycle(timeout, VALIDATE_TIMEOUT) {
                 Lifecycle::Ended => {
-                    if matches!(context.buffs[BuffKind::Rune], Buff::No) {
+                    if matches!(buffs[BuffKind::Rune].state, Buff::No) {
                         self.track_rune_fail_count();
                     } else {
                         self.rune_failed_count = 0;
                         #[cfg(debug_assertions)]
-                        context.debug.save_last_rune_result();
+                        resources.debug.save_last_rune_result();
                     }
                     None
                 }
@@ -1210,26 +1224,25 @@ impl PlayerState {
     /// bars are then cached and used to extract the current health and max health.
     // TODO: This should be a PlayerAction?
     #[inline]
-    fn update_health_state(&mut self, context: &Context) {
-        if let Player::SolvingRune(_) = context.player {
+    fn update_health_state(&mut self, resources: &Resources, player_state: Player) {
+        if matches!(player_state, Player::SolvingRune(_)) {
             return;
         }
         if self.config.use_potion_below_percent.is_none() {
-            {
-                let this = &mut *self;
-                this.health = None;
-                this.health_task = None;
-                this.health_bar = None;
-                this.health_bar_task = None;
-            };
+            self.health = None;
+            self.health_task = None;
+            self.health_bar = None;
+            self.health_bar_task = None;
             return;
         }
 
         let Some(health_bar) = self.health_bar else {
-            let update =
-                update_detection_task(context, 1000, &mut self.health_bar_task, move |detector| {
-                    detector.detect_player_health_bar()
-                });
+            let update = update_detection_task(
+                resources,
+                1000,
+                &mut self.health_bar_task,
+                move |detector| detector.detect_player_health_bar(),
+            );
             if let Update::Ok(health_bar) = update {
                 self.health_bar = Some(health_bar);
             }
@@ -1237,7 +1250,7 @@ impl PlayerState {
         };
 
         let Update::Ok(health) = update_detection_task(
-            context,
+            resources,
             self.config.update_health_millis.unwrap_or(1000),
             &mut self.health_task,
             move |detector| {
@@ -1256,7 +1269,7 @@ impl PlayerState {
 
         self.health = Some(health);
         if ratio <= percentage {
-            let _ = context.input.send_key(self.config.potion_key);
+            resources.input.send_key(self.config.potion_key);
         }
     }
 
@@ -1264,32 +1277,32 @@ impl PlayerState {
     ///
     /// Upon being dead, a notification will be scheduled to notify the user.
     #[inline]
-    fn update_is_dead_state(&mut self, context: &Context) {
+    fn update_is_dead_state(&mut self, resources: &Resources) {
         let Update::Ok(is_dead) =
-            update_detection_task(context, 3000, &mut self.is_dead_task, |detector| {
+            update_detection_task(resources, 3000, &mut self.is_dead_task, |detector| {
                 Ok(detector.detect_player_is_dead())
             })
         else {
             return;
         };
         if is_dead && !self.is_dead {
-            let _ = context
+            let _ = resources
                 .notification
                 .schedule_notification(NotificationKind::PlayerIsDead);
         }
         if is_dead {
             let update =
-                update_detection_task(context, 1000, &mut self.is_dead_button_task, |detector| {
+                update_detection_task(resources, 1000, &mut self.is_dead_button_task, |detector| {
                     detector.detect_tomb_ok_button()
                 });
             match update {
                 Update::Ok(bbox) => {
                     let x = bbox.x + bbox.width / 2;
                     let y = bbox.y + bbox.height / 2;
-                    let _ = context.input.send_mouse(x, y, MouseKind::Click);
+                    resources.input.send_mouse(x, y, MouseKind::Click);
                 }
                 Update::Err(_) => {
-                    let _ = context.input.send_mouse(300, 100, MouseKind::Move);
+                    resources.input.send_mouse(300, 100, MouseKind::Move);
                 }
                 Update::Pending => (),
             }
@@ -1315,10 +1328,10 @@ mod tests {
     use crate::{
         Position,
         array::Array,
-        context::Context,
+        ecs::Resources,
         minimap::{Minimap, MinimapIdle},
         pathing::{Platform, find_neighbors},
-        player::{AutoMob, PlayerAction, PlayerState, Quadrant},
+        player::{AutoMob, PlayerAction, PlayerContext, Quadrant},
         rng::Rng,
     };
 
@@ -1329,23 +1342,27 @@ mod tests {
 
     #[test]
     fn auto_mob_pick_reachable_y_should_ignore_solidified_x_range() {
-        let context = Context::new(None, None);
-        let mut state = PlayerState {
+        let resources = Resources::new(None, None);
+        let mut state = PlayerContext {
             auto_mob_reachable_y_map: HashMap::from([(50, 1)]),
             auto_mob_ignore_xs_map: HashMap::from([(50, vec![((53..58).into(), 3)])]),
             ..Default::default()
         };
 
         assert_matches!(
-            state.auto_mob_pick_reachable_y_position(&context, Point::new(55, 50)),
+            state.auto_mob_pick_reachable_y_position(
+                &resources,
+                Minimap::Detecting,
+                Point::new(55, 50)
+            ),
             None
         );
     }
 
     #[test]
     fn auto_mob_pick_reachable_y_in_threshold() {
-        let context = Context::new(None, None);
-        let mut state = PlayerState {
+        let resources = Resources::new(None, None);
+        let mut state = PlayerContext {
             auto_mob_reachable_y_map: [100, 120, 150].into_iter().map(|y| (y, 1)).collect(),
             last_known_pos: Some(Point::new(0, 0)),
             ..Default::default()
@@ -1354,15 +1371,15 @@ mod tests {
 
         // Expect 120 to be chosen since it's closest to 125
         assert_matches!(
-            state.auto_mob_pick_reachable_y_position(&context, mob_pos),
+            state.auto_mob_pick_reachable_y_position(&resources, Minimap::Detecting, mob_pos),
             Some(Point { x: 50, y: 120 })
         );
     }
 
     #[test]
     fn auto_mob_pick_reachable_y_out_of_threshold() {
-        let context = Context::new(None, None);
-        let mut state = PlayerState {
+        let resources = Resources::new(None, None);
+        let mut state = PlayerContext {
             auto_mob_reachable_y_map: [1000, 2000].into_iter().map(|y| (y, 1)).collect(),
             last_known_pos: Some(Point::new(0, 0)),
             ..Default::default()
@@ -1371,14 +1388,14 @@ mod tests {
 
         // No y value is chosen so the original y is used
         assert_matches!(
-            state.auto_mob_pick_reachable_y_position(&context, mob_pos),
+            state.auto_mob_pick_reachable_y_position(&resources, Minimap::Detecting, mob_pos),
             Some(Point { x: 50, y: 125 })
         );
     }
 
     #[test]
     fn auto_mob_track_reachable_y() {
-        let mut player = PlayerState {
+        let mut player = PlayerContext {
             auto_mob_reachable_y_map: HashMap::from([
                 (100, 1), // Will be decremented and removed
                 (120, 2), // Will be incremented
@@ -1398,8 +1415,7 @@ mod tests {
     #[test]
     fn auto_mob_track_ignore_xs_conditional_merge() {
         let y = 100;
-        let context = Context::new(None, None);
-        let mut player = PlayerState {
+        let mut player = PlayerContext {
             normal_action: Some(PlayerAction::AutoMob(AutoMob {
                 position: Position {
                     x: 50,
@@ -1419,7 +1435,7 @@ mod tests {
             ..Default::default()
         };
 
-        player.auto_mob_track_ignore_xs(&context, true);
+        player.auto_mob_track_ignore_xs(Minimap::Detecting, true);
 
         let ranges = player.auto_mob_ignore_xs_map.get(&y).unwrap();
         assert_eq!(ranges.len(), 1); // Should be merged
@@ -1442,7 +1458,7 @@ mod tests {
             ],
         )]);
 
-        player.auto_mob_track_ignore_xs(&context, true);
+        player.auto_mob_track_ignore_xs(Minimap::Detecting, true);
 
         let ranges = player.auto_mob_ignore_xs_map.get(&y).unwrap();
         assert_eq!(ranges.len(), 2); // Should remain unmerged but incremented
@@ -1463,11 +1479,8 @@ mod tests {
         idle.platforms = Array::from_iter(platforms);
         idle.bbox = Rect::new(0, 0, 100, 100);
 
-        let mut context = Context::new(None, None);
-        context.minimap = Minimap::Idle(idle);
-
-        let mut state = PlayerState::default();
-        state.auto_mob_populate_ignore_xs(&context);
+        let mut state = PlayerContext::default();
+        state.auto_mob_populate_ignore_xs(Minimap::Idle(idle));
 
         let map = &state.auto_mob_ignore_xs_map;
 
@@ -1486,7 +1499,7 @@ mod tests {
 
     #[test]
     fn auto_mob_pathing_point_initial_quadrant_rotation() {
-        let mut state = PlayerState {
+        let mut state = PlayerContext {
             last_known_pos: Some(Point::new(10, 10)), // Bottom-left in minimap rectangle
             ..Default::default()
         };
@@ -1500,12 +1513,11 @@ mod tests {
         idle.bbox = bbox;
 
         let rng = Rng::new(SEED);
-        let mut context = Context::new(None, None);
-        context.minimap = Minimap::Idle(idle);
-        context.rng = rng;
+        let mut resources = Resources::new(None, None);
+        resources.rng = rng;
 
         let bound = Rect::new(0, 0, 100, 100); // Whole map
-        let point = state.auto_mob_pathing_point(&context, bound);
+        let point = state.auto_mob_pathing_point(&resources, Minimap::Idle(idle), bound);
 
         assert!(point.x >= 0 && point.x <= 20); // Platform xs
         assert_eq!(point.y, 80); // Platform y
@@ -1514,7 +1526,7 @@ mod tests {
 
     #[test]
     fn auto_mob_pathing_point_fallbacks_to_reachable_y_map() {
-        let mut state = PlayerState {
+        let mut state = PlayerContext {
             auto_mob_last_quadrant: Some(Quadrant::BottomRight),
             auto_mob_reachable_y_map: HashMap::from([(20, 4)]), // Solidified and in bottom-left
             ..Default::default()
@@ -1525,12 +1537,11 @@ mod tests {
         idle.bbox = bbox;
 
         let rng = Rng::new(SEED);
-        let mut context = Context::new(None, None);
-        context.minimap = Minimap::Idle(idle);
-        context.rng = rng;
+        let mut resources = Resources::new(None, None);
+        resources.rng = rng;
 
         let bound = Rect::new(0, 0, 100, 100);
-        let point = state.auto_mob_pathing_point(&context, bound);
+        let point = state.auto_mob_pathing_point(&resources, Minimap::Idle(idle), bound);
 
         assert_eq!(point.x, 37);
         assert_eq!(point.y, 20); // 100 - 80

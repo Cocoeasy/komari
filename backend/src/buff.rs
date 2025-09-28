@@ -8,18 +8,27 @@ use strum::EnumIter;
 
 use crate::{
     Character, Settings,
-    context::{Context, Contextual, ControlFlow},
+    ecs::Resources,
     player::Player,
     task::{Task, Update, update_detection_task},
+    transition, transition_if,
 };
 
 const COMMON_FAIL_COUNT: u32 = 5;
 const FAMILIAR_FAIL_COUNT: u32 = 2;
 const RUNE_FAIL_COUNT: u32 = 1;
 
+#[derive(Debug)]
+pub struct BuffEntity {
+    pub state: Buff,
+    pub context: BuffContext,
+}
+
+pub type BuffEntities = [BuffEntity; BuffKind::COUNT];
+
 /// Stores persistent state of a buff.
 #[derive(Debug)]
-pub struct BuffState {
+pub struct BuffContext {
     /// The kind of buff.
     kind: BuffKind,
     /// Task for detecting if the coresponding buff exists.
@@ -33,7 +42,7 @@ pub struct BuffState {
     enabled: bool,
 }
 
-impl BuffState {
+impl BuffContext {
     pub fn new(kind: BuffKind) -> Self {
         Self {
             kind,
@@ -99,17 +108,6 @@ impl BuffState {
     }
 }
 
-/// Buff contextual state.
-#[derive(Clone, Copy, Debug)]
-pub enum Buff {
-    /// Player does not have this [`BuffKind`].
-    No,
-    /// Player has this [`BuffKind`].
-    Yes,
-    /// Player did have this [`BuffKind`] but currently unsure.
-    Volatile,
-}
-
 #[derive(Clone, Copy, Debug, EnumIter)]
 #[cfg_attr(test, derive(PartialEq))]
 #[repr(usize)]
@@ -141,74 +139,72 @@ impl BuffKind {
     pub const COUNT: usize = mem::variant_count::<BuffKind>();
 }
 
-impl Index<BuffKind> for [Buff; BuffKind::COUNT] {
-    type Output = Buff;
+impl Index<BuffKind> for BuffEntities {
+    type Output = BuffEntity;
 
     fn index(&self, index: BuffKind) -> &Self::Output {
         self.get(index as usize).unwrap()
     }
 }
 
-impl IndexMut<BuffKind> for [Buff; BuffKind::COUNT] {
+impl IndexMut<BuffKind> for BuffEntities {
     fn index_mut(&mut self, index: BuffKind) -> &mut Self::Output {
         self.get_mut(index as usize).unwrap()
     }
 }
 
-impl Contextual for Buff {
-    type Persistent = BuffState;
-
-    fn update(self, context: &Context, state: &mut BuffState) -> ControlFlow<Self> {
-        if !state.enabled {
-            return ControlFlow::Next(Buff::No);
-        }
-        let next = if matches!(context.player, Player::CashShopThenExit(_, _)) {
-            self
-        } else {
-            update_context(self, context, state)
-        };
-        ControlFlow::Next(next)
-    }
+/// Buff contextual state.
+#[derive(Clone, Copy, Debug)]
+pub enum Buff {
+    /// Player does not have this [`BuffKind`].
+    No,
+    /// Player has this [`BuffKind`].
+    Yes,
+    /// Player did have this [`BuffKind`] but currently unsure.
+    Volatile,
 }
 
 #[inline]
-fn update_context(contextual: Buff, context: &Context, state: &mut BuffState) -> Buff {
-    let kind = state.kind;
+pub fn run_system(resources: &Resources, buff: &mut BuffEntity, player_state: Player) {
+    transition_if!(buff, Buff::No, !buff.context.enabled);
+    transition_if!(matches!(player_state, Player::CashShopThenExit(_)));
+
+    let kind = buff.context.kind;
     let Update::Ok(has_buff) =
-        update_detection_task(context, 5000, &mut state.task, move |detector| {
+        update_detection_task(resources, 5000, &mut buff.context.task, move |detector| {
             Ok(detector.detect_player_buff(kind))
         })
     else {
-        return contextual;
+        return;
     };
-    state.fail_count = if matches!(contextual, Buff::Volatile) && !has_buff {
-        state.fail_count + 1
+
+    let is_volatile = matches!(buff.state, Buff::Volatile);
+    buff.context.fail_count = if is_volatile && !has_buff {
+        buff.context.fail_count + 1
     } else {
         0
     };
-    match (has_buff, contextual) {
-        (true, Buff::Volatile) | (true, Buff::Yes) | (true, Buff::No) => Buff::Yes,
-        (false, Buff::No) => Buff::No,
+
+    let count = buff.context.fail_count;
+    let max_count = buff.context.max_fail_count;
+    match (has_buff, buff.state) {
+        (true, Buff::Volatile) | (true, Buff::Yes) | (true, Buff::No) => {
+            transition!(buff, Buff::Yes)
+        }
+        (false, Buff::No) => transition!(buff, Buff::No),
         (false, Buff::Yes) => {
-            if state.max_fail_count > 1 {
-                Buff::Volatile
-            } else {
-                Buff::No
-            }
+            transition_if!(buff, Buff::Volatile, Buff::No, max_count > 1)
         }
         (false, Buff::Volatile) => {
-            if state.fail_count >= state.max_fail_count {
-                Buff::No
-            } else {
-                Buff::Volatile
-            }
+            transition_if!(buff, Buff::No, Buff::Volatile, count >= max_count)
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{assert_matches::assert_matches, time::Duration};
+    use std::assert_matches::assert_matches;
+    use std::time::Duration;
 
     use mockall::predicate::eq;
     use strum::IntoEnumIterator;
@@ -216,6 +212,7 @@ mod tests {
 
     use super::*;
     use crate::detect::MockDetector;
+    use crate::ecs::Resources;
 
     fn detector_with_kind(kind: BuffKind, result: bool) -> MockDetector {
         let mut detector = MockDetector::new();
@@ -229,76 +226,107 @@ mod tests {
         detector
     }
 
-    async fn advance_task(contextual: Buff, context: &Context, state: &mut BuffState) -> Buff {
-        let mut buff = update_context(contextual, context, state);
-        while !state.task.as_ref().unwrap().completed() {
-            buff = update_context(buff, context, state);
+    async fn run_system_until_task_completed(resources: &Resources, buff: &mut BuffEntity) {
+        while !buff
+            .context
+            .task
+            .as_ref()
+            .map_or(false, |task| task.completed())
+        {
+            run_system(resources, buff, Player::Idle);
             advance(Duration::from_millis(1000)).await;
         }
-        buff
     }
 
     #[tokio::test(start_paused = true)]
-    async fn buff_no_to_yes() {
+    async fn run_system_no_to_yes() {
         for kind in BuffKind::iter() {
             let detector = detector_with_kind(kind, true);
-            let context = Context::new(None, Some(detector));
-            let mut state = BuffState::new(kind);
+            let resources = Resources::new(None, Some(detector));
+            let mut buff = BuffEntity {
+                state: Buff::No,
+                context: BuffContext::new(kind),
+            };
 
-            let buff = advance_task(Buff::No, &context, &mut state).await;
-            let buff = update_context(buff, &context, &mut state);
-            assert_eq!(state.fail_count, 0);
-            assert_matches!(buff, Buff::Yes);
+            run_system_until_task_completed(&resources, &mut buff).await;
+
+            assert_matches!(buff.state, Buff::Yes);
+            assert_eq!(buff.context.fail_count, 0);
         }
     }
 
     #[tokio::test(start_paused = true)]
-    async fn buff_yes_to_no() {
+    async fn run_system_yes_to_no() {
         for kind in BuffKind::iter() {
             let detector = detector_with_kind(kind, false);
-            let context = Context::new(None, Some(detector));
-            let mut state = BuffState::new(kind);
-            state.max_fail_count = 2;
-            state.fail_count = 0;
-
-            let mut buff = Buff::Yes;
+            let resources = Resources::new(None, Some(detector));
+            let mut buff = BuffEntity {
+                state: Buff::Yes,
+                context: BuffContext::new(kind),
+            };
+            buff.context.max_fail_count = 2;
 
             // First failure: Yes -> Volatile
-            buff = advance_task(buff, &context, &mut state).await;
-            assert_matches!(buff, Buff::Volatile);
-            assert_eq!(state.fail_count, 0);
+            run_system_until_task_completed(&resources, &mut buff).await;
+            assert_matches!(buff.state, Buff::Volatile);
+            assert_eq!(buff.context.fail_count, 0);
 
             // Second failure: Volatile -> still Volatile
-            buff = advance_task(buff, &context, &mut state).await;
-            assert_matches!(buff, Buff::Volatile);
-            assert_eq!(state.fail_count, 1);
+            buff.context.task = None;
+            run_system_until_task_completed(&resources, &mut buff).await;
+            assert_matches!(buff.state, Buff::Volatile);
+            assert_eq!(buff.context.fail_count, 1);
 
             // Third failure: Volatile -> No (fail_count reached max)
-            buff = advance_task(buff, &context, &mut state).await;
-            assert_matches!(buff, Buff::No);
-            assert_eq!(state.fail_count, 2); // Still 2, as No resets it on next tick
+            buff.context.task = None;
+            run_system_until_task_completed(&resources, &mut buff).await;
+            assert_matches!(buff.state, Buff::No);
+            assert_eq!(buff.context.fail_count, 2);
         }
     }
 
     #[tokio::test(start_paused = true)]
-    async fn buff_volatile_to_yes() {
+    async fn run_system_volatile_to_yes() {
         for kind in BuffKind::iter() {
             let detector = detector_with_kind(kind, true);
-            let context = Context::new(None, Some(detector));
-            let mut state = BuffState::new(kind);
-            state.max_fail_count = 3;
-            state.fail_count = 2;
+            let resources = Resources::new(None, Some(detector));
+            let mut buff = BuffEntity {
+                state: Buff::Volatile,
+                context: BuffContext::new(kind),
+            };
+            buff.context.max_fail_count = 3;
+            buff.context.fail_count = 2;
 
-            let buff = advance_task(Buff::Volatile, &context, &mut state).await;
-            assert_matches!(buff, Buff::Yes);
-            assert_eq!(state.fail_count, 0);
+            run_system_until_task_completed(&resources, &mut buff).await;
+
+            assert_matches!(buff.state, Buff::Yes);
+            assert_eq!(buff.context.fail_count, 0);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_system_volatile_stay_before_threshold() {
+        for kind in BuffKind::iter() {
+            let detector = detector_with_kind(kind, false);
+            let resources = Resources::new(None, Some(detector));
+            let mut buff = BuffEntity {
+                state: Buff::Volatile,
+                context: BuffContext::new(kind),
+            };
+            buff.context.max_fail_count = 3;
+            buff.context.fail_count = 1;
+
+            run_system_until_task_completed(&resources, &mut buff).await;
+
+            assert_matches!(buff.state, Buff::Volatile);
+            assert_eq!(buff.context.fail_count, 2);
         }
     }
 
     #[test]
-    fn buff_disabled_reset() {
+    fn update_enabled_state_reset_on_disabled() {
         let kind = BuffKind::Rune;
-        let mut state = BuffState::new(kind);
+        let mut state = BuffContext::new(kind);
         state.enabled = true;
         state.fail_count = 5;
 
@@ -307,23 +335,9 @@ mod tests {
         settings.enable_rune_solving = false;
 
         state.update_enabled_state(&config, &settings);
+
         assert!(!state.enabled);
         assert_eq!(state.fail_count, 0);
         assert!(state.task.is_none());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn buff_volatile_stay_before_threshold() {
-        for kind in BuffKind::iter() {
-            let detector = detector_with_kind(kind, false);
-            let context = Context::new(None, Some(detector));
-            let mut state = BuffState::new(kind);
-            state.max_fail_count = 3;
-            state.fail_count = 1;
-
-            let buff = advance_task(Buff::Volatile, &context, &mut state).await;
-            assert_matches!(buff, Buff::Volatile);
-            assert_eq!(state.fail_count, 2);
-        }
     }
 }
