@@ -275,7 +275,9 @@ impl DefaultRotator {
                     has_erda_action || has_linked_action
                 }
                 Some(ActionCondition::Linked) | Some(ActionCondition::EveryMillis(_)) | None => {
-                    world.player.context // The player currently executing action
+                    world
+                        .player
+                        .context // The player currently executing action
                         .priority_action_id()
                         .is_some_and(|action_id| action_id == id)
                         || self // The action is in queue
