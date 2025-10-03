@@ -1094,7 +1094,11 @@ impl PlayerContext {
     ) -> bool {
         if self.update_position_state(resources, minimap_state) {
             self.update_health_state(resources, player_state);
-            self.update_rune_validating_state(resources, buffs);
+            self.update_rune_validating_state(
+                #[cfg(debug_assertions)]
+                resources,
+                buffs,
+            );
             self.update_is_dead_state(resources);
             true
         } else {
@@ -1195,7 +1199,11 @@ impl PlayerContext {
     /// successfully detects and sends all the keys. After about 12 seconds, it
     /// will check if the player has the rune buff.
     #[inline]
-    fn update_rune_validating_state(&mut self, resources: &Resources, buffs: &BuffEntities) {
+    fn update_rune_validating_state(
+        &mut self,
+        #[cfg(debug_assertions)] resources: &Resources,
+        buffs: &BuffEntities,
+    ) {
         const VALIDATE_TIMEOUT: u32 = 375;
 
         debug_assert!(self.rune_failed_count < MAX_RUNE_FAILED_COUNT);

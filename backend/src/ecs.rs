@@ -1,8 +1,8 @@
+#[cfg(debug_assertions)]
+use std::cell::RefCell;
 #[cfg(test)]
 use std::rc::Rc;
-#[cfg(debug_assertions)]
-use std::time::Instant;
-use std::{cell::RefCell, time::Duration};
+use std::time::{Duration, Instant};
 
 use dyn_clone::clone_box;
 #[cfg(debug_assertions)]

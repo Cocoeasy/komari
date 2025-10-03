@@ -1,12 +1,10 @@
-#[cfg(debug_assertions)]
-use std::time::Instant;
 use std::{
     cell::RefCell,
     env,
     rc::Rc,
     sync::atomic::{AtomicBool, Ordering},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use opencv::{
