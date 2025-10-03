@@ -1,30 +1,32 @@
-use actions::{on_action, on_action_state_mut};
-use adjust::{Adjusting, update_adjusting_context};
-use cash_shop::{CashShop, update_cash_shop_context};
-use double_jump::{DoubleJumping, update_double_jumping_context};
-use fall::update_falling_context;
-use familiars_swap::{FamiliarsSwapping, update_familiars_swapping_context};
-use grapple::update_grappling_context;
-use idle::update_idle_context;
-use jump::update_jumping_context;
-use moving::{MOVE_TIMEOUT, Moving, MovingIntermediates, update_moving_context};
+use actions::next_action;
+use adjust::{Adjusting, update_adjusting_state};
+use cash_shop::{CashShop, update_cash_shop_state};
+use double_jump::{DoubleJumping, update_double_jumping_state};
+use fall::update_falling_state;
+use familiars_swap::{FamiliarsSwapping, update_familiars_swapping_state};
+use grapple::update_grappling_state;
+use idle::update_idle_state;
+use jump::update_jumping_state;
+use moving::{MOVE_TIMEOUT, Moving, MovingIntermediates, update_moving_state};
 use opencv::core::Point;
-use panic::update_panicking_context;
-use solve_rune::{SolvingRune, update_solving_rune_context};
-use stall::update_stalling_context;
+use panic::update_panicking_state;
+use solve_rune::{SolvingRune, update_solving_rune_state};
+use stall::update_stalling_state;
 use state::LastMovement;
 use strum::Display;
 use timeout::Timeout;
-use unstuck::update_unstucking_context;
-use up_jump::{UpJumping, update_up_jumping_context};
-use use_key::{UseKey, update_use_key_context};
+use unstuck::update_unstucking_state;
+use up_jump::{UpJumping, update_up_jumping_state};
+use use_key::{UseKey, update_use_key_state};
 
 use crate::{
     bridge::KeyKind,
-    context::{Context, Contextual, ControlFlow},
+    buff::BuffEntities,
     database::ActionKeyDirection,
-    minimap::Minimap,
-    player::chat::{Chatting, update_chatting_context},
+    ecs::Resources,
+    minimap::{Minimap, MinimapEntity},
+    player::chat::{Chatting, update_chatting_state},
+    transition, transition_if,
 };
 
 mod actions;
@@ -50,11 +52,17 @@ mod use_key;
 pub use actions::*;
 pub use {
     chat::ChattingContent, double_jump::DOUBLE_JUMP_THRESHOLD, grapple::GRAPPLING_MAX_THRESHOLD,
-    grapple::GRAPPLING_THRESHOLD, panic::Panicking, state::PlayerState, state::Quadrant,
+    grapple::GRAPPLING_THRESHOLD, panic::Panicking, state::PlayerContext, state::Quadrant,
 };
 
 /// Minimum y distance from the destination required to perform a jump.
 pub const JUMP_THRESHOLD: i32 = 7;
+
+#[derive(Debug)]
+pub struct PlayerEntity {
+    pub state: Player,
+    pub context: PlayerContext,
+}
 
 /// The player contextual states.
 #[derive(Clone, Copy, Debug, Display)]
@@ -87,13 +95,13 @@ pub enum Player {
         timeout_on_complete: bool,
     },
     /// Unstucks when inside non-detecting position or because of [`PlayerState::unstuck_counter`].
-    Unstucking(Timeout, Option<bool>, bool),
+    Unstucking(Timeout, bool),
     /// Stalls for time and return to [`Player::Idle`] or [`PlayerState::stalling_timeout_state`].
     Stalling(Timeout, u32),
     /// Tries to solve a rune.
     SolvingRune(SolvingRune),
     /// Enters the cash shop then exit after 10 seconds.
-    CashShopThenExit(Timeout, CashShop),
+    CashShopThenExit(CashShop),
     #[strum(to_string = "FamiliarsSwapping({0})")]
     FamiliarsSwapping(FamiliarsSwapping),
     Panicking(Panicking),
@@ -133,8 +141,8 @@ impl Player {
                 timeout_on_complete: _,
             } => moving.completed,
             Player::SolvingRune(_)
-            | Player::CashShopThenExit(_, _)
-            | Player::Unstucking(_, _, _)
+            | Player::CashShopThenExit(_)
+            | Player::Unstucking(_, _)
             | Player::DoubleJumping(DoubleJumping { forced: true, .. })
             | Player::UseKey(_)
             | Player::FamiliarsSwapping(_)
@@ -145,114 +153,111 @@ impl Player {
     }
 }
 
-impl Contextual for Player {
-    type Persistent = PlayerState;
-
-    // TODO: Detect if a point is reachable after number of retries?
-    fn update(self, context: &Context, state: &mut PlayerState) -> ControlFlow<Self> {
-        if state.rune_cash_shop {
-            let _ = context.input.send_key_up(KeyKind::Up);
-            let _ = context.input.send_key_up(KeyKind::Down);
-            let _ = context.input.send_key_up(KeyKind::Left);
-            let _ = context.input.send_key_up(KeyKind::Right);
-            state.rune_cash_shop = false;
-            state.reset_to_idle_next_update = false;
-            return ControlFlow::Next(Player::CashShopThenExit(
-                Timeout::default(),
-                CashShop::Entering,
-            ));
+pub fn run_system(
+    resources: &Resources,
+    player: &mut PlayerEntity,
+    minimap: &MinimapEntity,
+    buffs: &BuffEntities,
+) {
+    transition_if!(
+        player,
+        Player::CashShopThenExit(CashShop::new()),
+        player.context.rune_cash_shop,
+        {
+            resources.input.send_key_up(KeyKind::Up);
+            resources.input.send_key_up(KeyKind::Down);
+            resources.input.send_key_up(KeyKind::Left);
+            resources.input.send_key_up(KeyKind::Right);
+            player.context.rune_cash_shop = false;
+            player.context.reset_to_idle_next_update = false;
         }
+    );
 
-        let has_position = if state.ignore_pos_update {
-            state.last_known_pos.is_some()
-        } else {
-            state
-                .update_state(context)
-                .then(|| state.last_known_pos.unwrap())
-                .is_some()
+    let did_update = player
+        .context
+        .update_state(resources, player.state, minimap.state, buffs);
+    if !did_update && !resources.operation.halting() {
+        // When the player detection fails, the possible causes are:
+        // - Player moved inside the edges of the minimap
+        // - Other UIs overlapping the minimap
+        //
+        // `update_non_positional_context` is here to continue updating
+        // `Player::Unstucking` returned from below when the player
+        // is inside the edges of the minimap. And also `Player::CashShopThenExit`.
+        transition_if!(update_non_positional_state(
+            resources,
+            player,
+            minimap.state,
+            true
+        ));
+
+        let is_stucking = match minimap.state {
+            Minimap::Detecting => false,
+            Minimap::Idle(idle) => !idle.partially_overlapping,
         };
-        if !has_position && !context.operation.halting() {
-            // When the player detection fails, the possible causes are:
-            // - Player moved inside the edges of the minimap
-            // - Other UIs overlapping the minimap
-            //
-            // `update_non_positional_context` is here to continue updating
-            // `Player::Unstucking` returned from below when the player
-            // is inside the edges of the minimap. And also `Player::CashShopThenExit`.
-            if let Some(next) = update_non_positional_context(self, context, state, true) {
-                return ControlFlow::Next(next);
-            }
-            let next = if let Minimap::Idle(idle) = context.minimap
-                && !idle.partially_overlapping
+        transition_if!(
+            player,
+            Player::Unstucking(
+                Timeout::default(),
+                player.context.track_unstucking_transitioned()
+            ),
+            is_stucking,
             {
-                Player::Unstucking(
-                    Timeout::default(),
-                    None,
-                    state.track_unstucking_transitioned(),
-                )
-            } else {
-                Player::Detecting
-            };
-            if matches!(next, Player::Unstucking(_, _, _)) {
-                state.last_known_direction = ActionKeyDirection::Any;
+                player.context.last_known_direction = ActionKeyDirection::Any;
             }
-            return ControlFlow::Next(next);
-        };
+        );
+        transition!(player, Player::Detecting);
+    };
 
-        let contextual = if state.reset_to_idle_next_update {
-            Player::Idle
-        } else {
-            self
-        };
-        let next = update_non_positional_context(contextual, context, state, false)
-            .unwrap_or_else(|| update_positional_context(contextual, context, state));
-        let control_flow = if state.use_immediate_control_flow {
-            ControlFlow::Immediate(next)
-        } else {
-            ControlFlow::Next(next)
-        };
+    if player.context.reset_to_idle_next_update {
+        player.context.reset_to_idle_next_update = false;
+        player.state = Player::Idle;
+    }
 
-        state.reset_to_idle_next_update = false;
-        state.ignore_pos_update = state.use_immediate_control_flow;
-        state.use_immediate_control_flow = false;
-        control_flow
+    if !update_non_positional_state(resources, player, minimap.state, false) {
+        update_positional_state(resources, player, minimap.state);
     }
 }
 
 /// Updates the contextual state that does not require the player current position.
+///
+/// Returns `true` if state is updated.
 #[inline]
-fn update_non_positional_context(
-    contextual: Player,
-    context: &Context,
-    state: &mut PlayerState,
+fn update_non_positional_state(
+    resources: &Resources,
+    player: &mut PlayerEntity,
+    minimap_state: Minimap,
     failed_to_detect_player: bool,
-) -> Option<Player> {
-    match contextual {
-        Player::UseKey(use_key) => Some(update_use_key_context(context, state, use_key)),
-        Player::FamiliarsSwapping(swapping) => {
-            Some(update_familiars_swapping_context(context, state, swapping))
+) -> bool {
+    match player.state {
+        Player::UseKey(_) => update_use_key_state(resources, player, minimap_state),
+        Player::FamiliarsSwapping(_) => {
+            update_familiars_swapping_state(resources, player);
         }
-        Player::Unstucking(timeout, has_settings, gamba_mode) => Some(update_unstucking_context(
-            context,
-            state,
-            timeout,
-            has_settings,
-            gamba_mode,
-        )),
+        Player::Unstucking(timeout, gamba_mode) => {
+            update_unstucking_state(resources, player, minimap_state, timeout, gamba_mode);
+        }
         Player::Stalling(timeout, max_timeout) => {
-            (!failed_to_detect_player).then(|| update_stalling_context(state, timeout, max_timeout))
+            if failed_to_detect_player {
+                return false;
+            }
+
+            update_stalling_state(player, timeout, max_timeout);
         }
-        Player::SolvingRune(solving_rune) => (!failed_to_detect_player)
-            .then(|| update_solving_rune_context(context, state, solving_rune)),
-        Player::CashShopThenExit(timeout, cash_shop) => Some(update_cash_shop_context(
-            context,
-            state,
-            timeout,
-            cash_shop,
-            failed_to_detect_player,
-        )),
-        Player::Panicking(panicking) => Some(update_panicking_context(context, state, panicking)),
-        Player::Chatting(chatting) => Some(update_chatting_context(context, state, chatting)),
+        Player::SolvingRune(_) => {
+            if failed_to_detect_player {
+                return false;
+            }
+
+            update_solving_rune_state(resources, player);
+        }
+        Player::CashShopThenExit(cash_shop) => {
+            update_cash_shop_state(resources, player, cash_shop, failed_to_detect_player);
+        }
+        Player::Panicking(panicking) => {
+            update_panicking_state(resources, player, minimap_state, panicking);
+        }
+        Player::Chatting(chatting) => update_chatting_state(resources, player, chatting),
         Player::Detecting
         | Player::Idle
         | Player::Moving(_, _, _)
@@ -265,42 +270,36 @@ fn update_non_positional_context(
             moving: _,
             anchor: _,
             timeout_on_complete: _,
-        } => None,
+        } => return false,
     }
+
+    true
 }
 
-/// Updates the contextual state that requires the player current position
+/// Updates the contextual state that requires the player current position.
 #[inline]
-fn update_positional_context(
-    contextual: Player,
-    context: &Context,
-    state: &mut PlayerState,
-) -> Player {
-    match contextual {
-        Player::Detecting => Player::Idle,
-        Player::Idle => update_idle_context(context, state),
-        Player::Moving(dest, exact, intermediates) => {
-            update_moving_context(context, state, dest, exact, intermediates)
-        }
-        Player::Adjusting(adjusting) => update_adjusting_context(context, state, adjusting),
-        Player::DoubleJumping(double_jumping) => {
-            update_double_jumping_context(context, state, double_jumping)
-        }
-        Player::Grappling(moving) => update_grappling_context(context, state, moving),
-        Player::UpJumping(moving) => update_up_jumping_context(context, state, moving),
-        Player::Jumping(moving) => update_jumping_context(context, state, moving),
-        Player::Falling {
-            moving,
-            anchor,
-            timeout_on_complete,
-        } => update_falling_context(context, state, moving, anchor, timeout_on_complete),
+fn update_positional_state(
+    resources: &Resources,
+    player: &mut PlayerEntity,
+    minimap_state: Minimap,
+) {
+    match player.state {
+        Player::Detecting => transition!(player, Player::Idle),
+        Player::Idle => update_idle_state(resources, player, minimap_state),
+        Player::Moving(_, _, _) => update_moving_state(resources, player, minimap_state),
+        Player::Adjusting(_) => update_adjusting_state(resources, player, minimap_state),
+        Player::DoubleJumping(_) => update_double_jumping_state(resources, player, minimap_state),
+        Player::Grappling(_) => update_grappling_state(resources, player, minimap_state),
+        Player::UpJumping(_) => update_up_jumping_state(resources, player, minimap_state),
+        Player::Jumping(moving) => update_jumping_state(resources, player, moving),
+        Player::Falling { .. } => update_falling_state(resources, player, minimap_state),
         Player::UseKey(_)
-        | Player::Unstucking(_, _, _)
+        | Player::Unstucking(_, _)
         | Player::Stalling(_, _)
         | Player::SolvingRune(_)
         | Player::FamiliarsSwapping(_)
         | Player::Panicking(_)
         | Player::Chatting(_)
-        | Player::CashShopThenExit(_, _) => unreachable!(),
+        | Player::CashShopThenExit(_) => unreachable!(),
     }
 }

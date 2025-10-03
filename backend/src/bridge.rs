@@ -21,13 +21,13 @@ use platforms::{
 
 use crate::{
     CaptureMode, KeyBinding,
-    context::MS_PER_TICK_F32,
     database::Seeds,
     rng::Rng,
     rpc::{
         Coordinate as RpcCoordinate, InputService, Key as RpcKeyKind, KeyState as RpcKeyState,
         MouseAction as RpcMouseKind,
     },
+    run::MS_PER_TICK_F32,
 };
 
 /// Base mean in milliseconds to generate a pair from.
@@ -577,24 +577,23 @@ pub trait Input: Debug {
     /// Sends mouse `kind` to `(x, y)` relative to the client coordinate (e.g. capture area).
     ///
     /// `(0, 0)` is top-left and `(width, height)` is bottom-right.
-    fn send_mouse(&self, x: i32, y: i32, kind: MouseKind) -> Result<()>;
+    fn send_mouse(&self, x: i32, y: i32, kind: MouseKind);
 
     /// Presses a single key `kind`.
-    fn send_key(&self, kind: KeyKind) -> Result<()>;
+    fn send_key(&self, kind: KeyKind);
 
     /// Releases a held key `kind`.
-    fn send_key_up(&self, kind: KeyKind) -> Result<()>;
+    fn send_key_up(&self, kind: KeyKind);
 
     /// Holds down key `kind`.
     ///
     /// This key stroke is sent with the default options.
-    fn send_key_down(&self, kind: KeyKind) -> Result<()> {
-        self.send_key_down_with_options(kind, InputKeyDownOptions::default())
+    fn send_key_down(&self, kind: KeyKind) {
+        self.send_key_down_with_options(kind, InputKeyDownOptions::default());
     }
 
     /// Same as [`Self::send_key_down`] but with the provided `options`.
-    fn send_key_down_with_options(&self, kind: KeyKind, options: InputKeyDownOptions)
-    -> Result<()>;
+    fn send_key_down_with_options(&self, kind: KeyKind, options: InputKeyDownOptions);
 
     /// Whether all keys are cleared.
     fn all_keys_cleared(&self) -> bool;
@@ -775,7 +774,7 @@ impl Input for DefaultInput {
         self.kind = input_method_inner_from(method, self.delay_rng.seed());
     }
 
-    fn send_mouse(&self, x: i32, y: i32, kind: MouseKind) -> Result<()> {
+    fn send_mouse(&self, x: i32, y: i32, kind: MouseKind) {
         match &self.kind {
             InputMethodInner::Rpc(window, service) => {
                 if let Some(cell) = service {
@@ -784,15 +783,17 @@ impl Input for DefaultInput {
                         RpcCoordinate::Screen => CoordinateRelative::Monitor,
                         RpcCoordinate::Relative => CoordinateRelative::Window,
                     };
-                    let coordinates = window.convert_coordinate(x, y, relative)?;
+                    let Ok(coordinates) = window.convert_coordinate(x, y, relative) else {
+                        return;
+                    };
 
-                    borrow.send_mouse(
+                    let _ = borrow.send_mouse(
                         coordinates.width,
                         coordinates.height,
                         coordinates.x,
                         coordinates.y,
                         kind.into(),
-                    )?;
+                    );
                 }
             }
             InputMethodInner::Default(keys) => {
@@ -801,27 +802,21 @@ impl Input for DefaultInput {
                     MouseKind::Click => PlatformMouseKind::Click,
                     MouseKind::Scroll => PlatformMouseKind::Scroll,
                 };
-                keys.send_mouse(x, y, kind)?;
+                let _ = keys.send_mouse(x, y, kind);
             }
         }
-
-        Ok(())
     }
 
-    fn send_key(&self, kind: KeyKind) -> Result<()> {
-        self.send_key_inner(kind)
+    fn send_key(&self, kind: KeyKind) {
+        let _ = self.send_key_inner(kind);
     }
 
-    fn send_key_up(&self, kind: KeyKind) -> Result<()> {
-        self.send_key_up_inner(kind, false)
+    fn send_key_up(&self, kind: KeyKind) {
+        let _ = self.send_key_up_inner(kind, false);
     }
 
-    fn send_key_down_with_options(
-        &self,
-        kind: KeyKind,
-        options: InputKeyDownOptions,
-    ) -> Result<()> {
-        self.send_key_down_inner(kind, options.repeatable)
+    fn send_key_down_with_options(&self, kind: KeyKind, options: InputKeyDownOptions) {
+        let _ = self.send_key_down_inner(kind, options.repeatable);
     }
 
     #[inline]

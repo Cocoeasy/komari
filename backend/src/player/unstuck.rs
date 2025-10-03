@@ -1,15 +1,12 @@
 use opencv::core::Point;
 
-use super::{
-    PlayerState,
-    timeout::{Lifecycle, Timeout, next_timeout_lifecycle},
-};
+use super::timeout::{Lifecycle, Timeout, next_timeout_lifecycle};
 use crate::{
     bridge::KeyKind,
-    context::Context,
+    ecs::Resources,
     minimap::Minimap,
-    player::{MOVE_TIMEOUT, Player},
-    task::{Update, update_detection_task},
+    player::{MOVE_TIMEOUT, Player, PlayerEntity},
+    transition,
 };
 
 /// A threshold to consider spamming falling action
@@ -29,73 +26,61 @@ const Y_IGNORE_THRESHOLD: i32 = 18;
 /// Each initial transition to [`Player::Unstucking`] increases
 /// the [`PlayerState::unstuck_consecutive_counter`] by one. If the threshold is reached, this
 /// state will enter GAMBA mode. And by definition, it means `random bullsh*t go`.
-pub fn update_unstucking_context(
-    context: &Context,
-    state: &mut PlayerState,
+pub fn update_unstucking_state(
+    resources: &Resources,
+    player: &mut PlayerEntity,
+    minimap_state: Minimap,
     timeout: Timeout,
-    has_settings: Option<bool>,
     gamba_mode: bool,
-) -> Player {
-    let Minimap::Idle(idle) = context.minimap else {
-        return Player::Detecting;
+) {
+    let Minimap::Idle(idle) = minimap_state else {
+        transition!(player, Player::Detecting);
     };
-    let pos = state
+    let context = &mut player.context;
+    let pos = context
         .last_known_pos
         .map(|pos| Point::new(pos.x, idle.bbox.height - pos.y));
     let gamba_mode = gamba_mode || pos.is_none();
 
     match next_timeout_lifecycle(timeout, MOVE_TIMEOUT) {
         Lifecycle::Started(timeout) => {
-            let has_settings = if !gamba_mode && has_settings.is_none() {
-                match update_detection_task(context, 0, &mut state.unstuck_task, move |detector| {
-                    Ok(detector.detect_esc_settings())
-                }) {
-                    Update::Ok(has_settings) => Some(has_settings),
-                    Update::Err(_) | Update::Pending => {
-                        // Stall until ESC settings detection complete
-                        return Player::Unstucking(Timeout::default(), has_settings, gamba_mode);
-                    }
-                }
-            } else {
-                None
-            };
-            if has_settings.unwrap_or_default() || (gamba_mode && context.rng.random_bool(0.5)) {
-                let _ = context.input.send_key(KeyKind::Esc);
+            if (!gamba_mode && resources.detector().detect_esc_settings())
+                || (gamba_mode && resources.rng.random_bool(0.5))
+            {
+                resources.input.send_key(KeyKind::Esc);
             }
 
             let to_right = match (gamba_mode, pos) {
-                (true, _) => context.rng.random_bool(0.5),
+                (true, _) => resources.rng.random_bool(0.5),
                 (_, Some(Point { y, .. })) if y <= Y_IGNORE_THRESHOLD => {
-                    return Player::Unstucking(timeout, has_settings, gamba_mode);
+                    transition!(player, Player::Unstucking(timeout, gamba_mode))
                 }
                 (_, Some(Point { x, .. })) => x <= idle.bbox.width / 2,
                 (_, None) => unreachable!(),
             };
             if to_right {
-                let _ = context.input.send_key_down(KeyKind::Right);
+                resources.input.send_key_down(KeyKind::Right);
             } else {
-                let _ = context.input.send_key_up(KeyKind::Left);
+                resources.input.send_key_up(KeyKind::Left);
             }
 
-            Player::Unstucking(timeout, has_settings, gamba_mode)
+            transition!(player, Player::Unstucking(timeout, gamba_mode));
         }
-        Lifecycle::Ended => {
-            let _ = context.input.send_key_up(KeyKind::Right);
-            let _ = context.input.send_key_up(KeyKind::Left);
-
-            Player::Detecting
-        }
+        Lifecycle::Ended => transition!(player, Player::Detecting, {
+            resources.input.send_key_up(KeyKind::Right);
+            resources.input.send_key_up(KeyKind::Left);
+        }),
         Lifecycle::Updated(timeout) => {
-            let send_space = match (gamba_mode, pos) {
-                (true, _) => true,
-                (_, Some(pos)) if pos.y > Y_IGNORE_THRESHOLD => true,
-                _ => false,
-            };
-            if send_space {
-                let _ = context.input.send_key(state.config.jump_key);
-            }
-
-            Player::Unstucking(timeout, has_settings, gamba_mode)
+            transition!(player, Player::Unstucking(timeout, gamba_mode), {
+                let send_space = match (gamba_mode, pos) {
+                    (true, _) => true,
+                    (_, Some(pos)) if pos.y > Y_IGNORE_THRESHOLD => true,
+                    _ => false,
+                };
+                if send_space {
+                    resources.input.send_key(context.config.jump_key);
+                }
+            })
         }
     }
 }

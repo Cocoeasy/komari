@@ -16,9 +16,10 @@ use crate::{
     PotionMode, Settings,
     bridge::InputReceiver,
     buff::BuffKind,
-    context::{Context, Operation},
-    database_event_receiver, minimap,
-    player::{PlayerState, Quadrant},
+    database_event_receiver,
+    ecs::{Operation, Resources, World},
+    minimap,
+    player::Quadrant,
     skill::SkillKind,
 };
 
@@ -64,7 +65,7 @@ pub trait GameService: Debug {
 
     /// Broadcasts game state to listeners.
     #[cfg_attr(test, concretize)]
-    fn broadcast_state(&self, context: &Context, player: &PlayerState, minimap: Option<&Minimap>);
+    fn broadcast_state(&self, resources: &Resources, world: &World, minimap: Option<&Minimap>);
 
     /// Subscribes to game state.
     fn subscribe_state(&self) -> Receiver<GameState>;
@@ -148,15 +149,26 @@ impl GameService for DefaultGameService {
     }
 
     #[cfg_attr(test, concretize)]
-    fn broadcast_state(&self, context: &Context, player: &PlayerState, minimap: Option<&Minimap>) {
+    fn broadcast_state(
+        &self,
+        resources: &Resources,
+        world: &World,
+        minimap_data: Option<&Minimap>,
+    ) {
         if self.game_state_sender.is_empty() {
-            let position = player.last_known_pos.map(|pos| (pos.x, pos.y));
-            let state = context.player.to_string();
-            let health = player.health();
-            let normal_action = player.normal_action_name();
-            let priority_action = player.priority_action_name();
-            let erda_shower_state = context.skills[SkillKind::ErdaShower].to_string();
-            let destinations = player
+            let position = world
+                .player
+                .context
+                .last_known_pos
+                .map(|pos| (pos.x, pos.y));
+            let state = world.player.state.to_string();
+            let health = world.player.context.health();
+            let normal_action = world.player.context.normal_action_name();
+            let priority_action = world.player.context.priority_action_name();
+            let erda_shower_state = world.skills[SkillKind::ErdaShower].state.to_string();
+            let destinations = world
+                .player
+                .context
                 .last_destinations
                 .clone()
                 .map(|points| {
@@ -166,7 +178,7 @@ impl GameService for DefaultGameService {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            let operation = match context.operation {
+            let operation = match resources.operation {
                 Operation::HaltUntil { instant, .. } => GameOperation::HaltUntil(instant),
                 Operation::TemporaryHalting { resume, .. } => {
                     GameOperation::TemporaryHalting(resume)
@@ -175,12 +187,12 @@ impl GameService for DefaultGameService {
                 Operation::Running => GameOperation::Running,
                 Operation::RunUntil { instant, .. } => GameOperation::RunUntil(instant),
             };
-            let idle = if let minimap::Minimap::Idle(idle) = context.minimap {
+            let idle = if let minimap::Minimap::Idle(idle) = world.minimap.state {
                 Some(idle)
             } else {
                 None
             };
-            let platforms_bound = if minimap.is_some_and(|data| data.auto_mob_platforms_bound)
+            let platforms_bound = if minimap_data.is_some_and(|data| data.auto_mob_platforms_bound)
                 && let Some(idle) = idle
             {
                 idle.platforms_bound.map(|bound| bound.into())
@@ -195,17 +207,18 @@ impl GameService for DefaultGameService {
             } else {
                 vec![]
             };
-            let auto_mob_quadrant =
-                player
-                    .auto_mob_last_quadrant()
-                    .map(|quadrant| match quadrant {
-                        Quadrant::TopLeft => BoundQuadrant::TopLeft,
-                        Quadrant::TopRight => BoundQuadrant::TopRight,
-                        Quadrant::BottomRight => BoundQuadrant::BottomRight,
-                        Quadrant::BottomLeft => BoundQuadrant::BottomLeft,
-                    });
-            let detector = if context.detector.is_some() {
-                Some(context.detector_cloned_unwrap())
+            let auto_mob_quadrant = world
+                .player
+                .context
+                .auto_mob_last_quadrant()
+                .map(|quadrant| match quadrant {
+                    Quadrant::TopLeft => BoundQuadrant::TopLeft,
+                    Quadrant::TopRight => BoundQuadrant::TopRight,
+                    Quadrant::BottomRight => BoundQuadrant::BottomRight,
+                    Quadrant::BottomLeft => BoundQuadrant::BottomLeft,
+                });
+            let detector = if resources.detector.is_some() {
+                Some(resources.detector_cloned())
             } else {
                 None
             };

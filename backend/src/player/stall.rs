@@ -1,11 +1,11 @@
 use super::{
-    AutoMob, Player, PlayerAction, PlayerState,
-    actions::on_action_state_mut,
+    AutoMob, Player, PlayerAction,
+    actions::next_action,
     timeout::{Lifecycle, Timeout, next_timeout_lifecycle},
 };
-use crate::Position;
+use crate::{Position, player::PlayerEntity, transition, transition_from_action, transition_if};
 
-/// Updates the [`Player::Stalling`] contextual state
+/// Updates the [`Player::Stalling`] contextual state.
 ///
 /// This state stalls for the specified number of `max_timeout`. Upon timing out,
 /// it will return to [`PlayerState::stalling_timeout_state`] if [`Some`] or
@@ -15,39 +15,39 @@ use crate::Position;
 ///
 /// If this state timeout in auto mob with terminal state, it will perform
 /// auto mob reachable `y` solidifying if needed.
-pub fn update_stalling_context(
-    state: &mut PlayerState,
-    timeout: Timeout,
-    max_timeout: u32,
-) -> Player {
-    let next = match next_timeout_lifecycle(timeout, max_timeout) {
+pub fn update_stalling_state(player: &mut PlayerEntity, timeout: Timeout, max_timeout: u32) {
+    let next_state = match next_timeout_lifecycle(timeout, max_timeout) {
         Lifecycle::Started(timeout) => Player::Stalling(timeout, max_timeout),
-        Lifecycle::Ended => state.stalling_timeout_state.take().unwrap_or(Player::Idle),
+        Lifecycle::Ended => player
+            .context
+            .stalling_timeout_state
+            .take()
+            .unwrap_or(Player::Idle),
         Lifecycle::Updated(timeout) => Player::Stalling(timeout, max_timeout),
     };
+    let is_terminal = matches!(next_state, Player::Idle);
 
-    on_action_state_mut(
-        state,
-        |state, action| match action {
-            PlayerAction::AutoMob(AutoMob {
-                position: Position { y, .. },
-                ..
-            }) => {
-                let is_terminal = matches!(next, Player::Idle);
-                if is_terminal && state.auto_mob_reachable_y_require_update(y) {
-                    if !state.is_stationary {
-                        return Some((Player::Stalling(Timeout::default(), max_timeout), false));
-                    }
-                    state.auto_mob_track_reachable_y(y);
-                }
-                Some((next, is_terminal))
+    match next_action(&player.context) {
+        Some(PlayerAction::AutoMob(AutoMob {
+            position: Position { y, .. },
+            ..
+        })) => {
+            if is_terminal && player.context.auto_mob_reachable_y_require_update(y) {
+                transition_if!(
+                    player,
+                    Player::Stalling(Timeout::default(), max_timeout),
+                    !player.context.is_stationary
+                );
+
+                player.context.auto_mob_track_reachable_y(y);
             }
-            PlayerAction::PingPong(_) | PlayerAction::Key(_) | PlayerAction::Move(_) => {
-                Some((next, matches!(next, Player::Idle)))
-            }
-            PlayerAction::SolveRune => None,
-            _ => unreachable!(),
-        },
-        || next,
-    )
+
+            transition_from_action!(player, next_state, is_terminal);
+        }
+        Some(PlayerAction::PingPong(_) | PlayerAction::Key(_) | PlayerAction::Move(_)) => {
+            transition_from_action!(player, next_state, is_terminal);
+        }
+        Some(PlayerAction::SolveRune) | None => transition!(player, next_state),
+        Some(_) => unreachable!(),
+    }
 }

@@ -6,17 +6,22 @@ use opencv::{
     imgcodecs::{IMREAD_GRAYSCALE, imdecode, imencode_def},
 };
 
-use crate::{NavigationPath, context::Context, minimap::Minimap};
+use crate::{NavigationPath, ecs::Resources, minimap::Minimap};
 
 /// A service to handle navigation-related requests.
 pub trait NavigatorService: Debug {
     /// Creates a new [`NavigationPath`] if minimap is currently [`Minimap::Idle`].
-    fn create_path(&self, context: &Context) -> Option<NavigationPath>;
+    fn create_path(&self, resources: &Resources, minimap_state: Minimap) -> Option<NavigationPath>;
 
     /// Recaptures `path` with new information if minimap is currently [`Minimap::Idle`].
     ///
     /// Returns the updated [`NavigationPath`] or the original.
-    fn recapture_path(&self, context: &Context, path: NavigationPath) -> NavigationPath;
+    fn recapture_path(
+        &self,
+        resources: &Resources,
+        minimap_state: Minimap,
+        path: NavigationPath,
+    ) -> NavigationPath;
 
     /// Converts image `base64` to grayscale.
     fn navigation_snapshot_as_grayscale(&self, base64: String) -> String;
@@ -27,9 +32,9 @@ pub trait NavigatorService: Debug {
 pub struct DefaultNavigatorService;
 
 impl NavigatorService for DefaultNavigatorService {
-    fn create_path(&self, context: &Context) -> Option<NavigationPath> {
+    fn create_path(&self, resources: &Resources, minimap_state: Minimap) -> Option<NavigationPath> {
         if let Some((minimap_base64, name_base64, name_bbox)) =
-            extract_minimap_and_name_base64(context)
+            extract_minimap_and_name_base64(resources, minimap_state)
         {
             Some(NavigationPath {
                 minimap_snapshot_base64: minimap_base64,
@@ -43,9 +48,14 @@ impl NavigatorService for DefaultNavigatorService {
         }
     }
 
-    fn recapture_path(&self, context: &Context, mut path: NavigationPath) -> NavigationPath {
+    fn recapture_path(
+        &self,
+        resources: &Resources,
+        minimap_state: Minimap,
+        mut path: NavigationPath,
+    ) -> NavigationPath {
         if let Some((minimap_base64, name_base64, name_bbox)) =
-            extract_minimap_and_name_base64(context)
+            extract_minimap_and_name_base64(resources, minimap_state)
         {
             path.minimap_snapshot_base64 = minimap_base64;
             path.name_snapshot_base64 = name_base64;
@@ -73,9 +83,12 @@ fn convert_color_base64_to_grayscale_base64(base64: String) -> Option<String> {
 }
 
 // TODO: Better way?
-fn extract_minimap_and_name_base64(context: &Context) -> Option<(String, String, Rect)> {
-    if let Minimap::Idle(idle) = context.minimap
-        && let Some(detector) = context.detector.as_ref()
+fn extract_minimap_and_name_base64(
+    resources: &Resources,
+    minimap_state: Minimap,
+) -> Option<(String, String, Rect)> {
+    if let Minimap::Idle(idle) = minimap_state
+        && let Some(detector) = resources.detector.as_ref()
     {
         let name_bbox = detector.detect_minimap_name(idle.bbox).ok()?;
         let name = detector.grayscale_mat().roi(name_bbox).ok()?;

@@ -2,8 +2,8 @@ use log::debug;
 use opencv::core::Point;
 
 use super::{
-    AutoMob, Key, Move, Player, PlayerAction, PlayerState,
-    actions::{PingPong, on_action_state_mut, on_ping_pong_double_jump_action},
+    AutoMob, Key, Move, Player, PlayerAction,
+    actions::{PingPong, next_action, update_from_ping_pong_action},
     double_jump::DoubleJumping,
     familiars_swap::FamiliarsSwapping,
     moving::{Moving, find_intermediate_points},
@@ -13,48 +13,45 @@ use super::{
 use crate::{
     ActionKeyDirection, ActionKeyWith, Position,
     bridge::KeyKind,
-    context::Context,
+    ecs::Resources,
     minimap::Minimap,
-    player::{ChattingContent, chat::Chatting},
+    player::{ChattingContent, PlayerEntity, chat::Chatting},
     rng::Rng,
+    transition, transition_from_action, transition_if,
 };
 
 /// Updates [`Player::Idle`] contextual state.
 ///
 /// This state does not do much on its own except when auto mobbing. It acts as entry
 /// to other state when there is an action and helps clearing keys.
-pub fn update_idle_context(context: &Context, state: &mut PlayerState) -> Player {
-    state.last_destinations = None;
-    state.last_movement = None;
-    state.stalling_timeout_state = None;
-    let _ = context.input.send_key_up(KeyKind::Up);
-    let _ = context.input.send_key_up(KeyKind::Down);
-    let _ = context.input.send_key_up(KeyKind::Left);
-    let _ = context.input.send_key_up(KeyKind::Right);
+pub fn update_idle_state(resources: &Resources, player: &mut PlayerEntity, minimap_state: Minimap) {
+    player.context.last_destinations = None;
+    player.context.last_movement = None;
+    player.context.stalling_timeout_state = None;
+    player.state = Player::Idle; // Sets initial next state first
+    resources.input.send_key_up(KeyKind::Up);
+    resources.input.send_key_up(KeyKind::Down);
+    resources.input.send_key_up(KeyKind::Left);
+    resources.input.send_key_up(KeyKind::Right);
 
-    on_action_state_mut(
-        state,
-        |state, action| on_player_action(context, state, action),
-        || Player::Idle,
-    )
+    update_from_action(resources, player, minimap_state);
 }
 
-fn on_player_action(
-    context: &Context,
-    state: &mut PlayerState,
-    action: PlayerAction,
-) -> Option<(Player, bool)> {
+fn update_from_action(resources: &Resources, player: &mut PlayerEntity, minimap_state: Minimap) {
+    let context = &mut player.context;
+    let action = next_action(context);
+
     match action {
-        PlayerAction::AutoMob(AutoMob { position, .. }) => {
+        Some(PlayerAction::AutoMob(AutoMob { position, .. })) => {
             let point = Point::new(position.x, position.y);
-            let intermediates = if state.config.auto_mob_platforms_pathing {
-                match context.minimap {
+            let intermediates = if context.config.auto_mob_platforms_pathing {
+                match minimap_state {
                     Minimap::Idle(idle) => find_intermediate_points(
                         &idle.platforms,
-                        state.last_known_pos.unwrap(),
+                        context.last_known_pos.unwrap(),
                         point,
                         position.allow_adjusting,
-                        state.config.auto_mob_platforms_pathing_up_jump_only,
+                        context.config.auto_mob_platforms_pathing_up_jump_only,
                         false,
                     ),
                     _ => unreachable!(),
@@ -62,15 +59,16 @@ fn on_player_action(
             } else {
                 None
             };
-            let next = intermediates
-                .map(|mut intermediates| {
+            let next = match intermediates {
+                Some(mut intermediates) => {
                     let (point, exact) = intermediates.next().unwrap();
                     Player::Moving(point, exact, Some(intermediates))
-                })
-                .unwrap_or(Player::Moving(point, position.allow_adjusting, None));
+                }
+                None => Player::Moving(point, position.allow_adjusting, None),
+            };
 
-            state.auto_mob_clear_pathing_task();
-            state.last_destinations = intermediates
+            context.auto_mob_clear_pathing_task();
+            context.last_destinations = intermediates
                 .map(|intermediates| {
                     intermediates
                         .inner()
@@ -79,111 +77,135 @@ fn on_player_action(
                         .collect::<Vec<_>>()
                 })
                 .or(Some(vec![point]));
-            Some((next, false))
+            transition!(player, next);
         }
-        PlayerAction::Move(Move { position, .. }) => {
-            let x = get_x_destination(&context.rng, position);
-            debug!(target: "player", "handling move: {} {}", x, position.y);
-            Some((
-                Player::Moving(Point::new(x, position.y), position.allow_adjusting, None),
-                false,
-            ))
+
+        Some(PlayerAction::Move(Move { position, .. })) => {
+            let x = get_x_destination(&resources.rng, position);
+            let point = Point::new(x, position.y);
+
+            debug!(target: "player", "handling move: {point:?}");
+            transition!(
+                player,
+                Player::Moving(point, position.allow_adjusting, None)
+            )
         }
-        PlayerAction::Key(Key {
+
+        Some(PlayerAction::Key(Key {
             position: Some(position),
             ..
-        }) => {
-            let x = get_x_destination(&context.rng, position);
-            debug!(target: "player", "handling move: {} {}", x, position.y);
-            Some((
-                Player::Moving(Point::new(x, position.y), position.allow_adjusting, None),
-                false,
-            ))
+        })) => {
+            let x = get_x_destination(&resources.rng, position);
+            let point = Point::new(x, position.y);
+
+            debug!(target: "player", "handling move: {point:?}");
+            transition!(
+                player,
+                Player::Moving(point, position.allow_adjusting, None)
+            );
         }
-        PlayerAction::Key(Key {
+
+        Some(PlayerAction::Key(Key {
             position: None,
             with: ActionKeyWith::DoubleJump,
             direction,
             ..
-        }) => {
-            if matches!(direction, ActionKeyDirection::Any)
-                || direction == state.last_known_direction
-            {
-                Some((
-                    Player::DoubleJumping(DoubleJumping::new(
-                        Moving::new(
-                            state.last_known_pos.unwrap(),
-                            state.last_known_pos.unwrap(),
-                            false,
-                            None,
-                        ),
-                        true,
-                        true,
-                    )),
-                    false,
-                ))
-            } else {
-                Some((Player::UseKey(UseKey::from_action(action)), false))
-            }
+        })) => {
+            let last_pos = context.last_known_pos.unwrap();
+            let last_direction = context.last_known_direction;
+
+            transition_if!(
+                player,
+                Player::DoubleJumping(DoubleJumping::new(
+                    Moving::new(last_pos, last_pos, false, None,),
+                    true,
+                    true,
+                )),
+                Player::UseKey(UseKey::from_action(action.unwrap())),
+                matches!(direction, ActionKeyDirection::Any) || direction == last_direction
+            );
         }
-        PlayerAction::Key(Key {
+
+        Some(PlayerAction::Key(Key {
             position: None,
             with: ActionKeyWith::Any | ActionKeyWith::Stationary,
             ..
-        }) => Some((Player::UseKey(UseKey::from_action(action)), false)),
-        PlayerAction::SolveRune => {
-            if let Minimap::Idle(idle) = context.minimap
-                && let Some(rune) = idle.rune()
-            {
-                if state.config.rune_platforms_pathing {
-                    if !state.is_stationary {
-                        return Some((Player::Idle, false));
-                    }
-                    let intermediates = find_intermediate_points(
-                        &idle.platforms,
-                        state.last_known_pos.unwrap(),
-                        rune,
-                        true,
-                        state.config.rune_platforms_pathing_up_jump_only,
-                        true,
+        })) => transition!(player, Player::UseKey(UseKey::from_action(action.unwrap()))),
+
+        Some(PlayerAction::SolveRune) => {
+            let idle = match minimap_state {
+                Minimap::Idle(idle) => idle,
+                _ => transition_from_action!(player, Player::Idle),
+            };
+            let rune = match idle.rune() {
+                Some(rune) => rune,
+                None => transition_from_action!(player, Player::Idle),
+            };
+
+            context.last_destinations = Some(vec![rune]);
+            transition_if!(
+                player,
+                Player::Moving(rune, true, None),
+                !context.config.rune_platforms_pathing
+            );
+            transition_if!(!context.is_stationary);
+
+            let intermediates = find_intermediate_points(
+                &idle.platforms,
+                context.last_known_pos.unwrap(),
+                rune,
+                true,
+                context.config.rune_platforms_pathing_up_jump_only,
+                true,
+            );
+            match intermediates {
+                Some(mut intermediates) => {
+                    context.last_destinations = Some(
+                        intermediates
+                            .inner()
+                            .into_iter()
+                            .map(|(point, _, _)| point)
+                            .collect(),
                     );
-                    if let Some(mut intermediates) = intermediates {
-                        state.last_destinations = Some(
-                            intermediates
-                                .inner()
-                                .into_iter()
-                                .map(|(point, _, _)| point)
-                                .collect(),
-                        );
-                        let (point, exact) = intermediates.next().unwrap();
-                        return Some((Player::Moving(point, exact, Some(intermediates)), false));
-                    }
+                    let (point, exact) = intermediates.next().unwrap();
+                    transition!(player, Player::Moving(point, exact, Some(intermediates)));
                 }
-                state.last_destinations = Some(vec![rune]);
-                return Some((Player::Moving(rune, true, None), false));
+                None => transition!(player, Player::Moving(rune, true, None)),
             }
-            Some((Player::Idle, true))
         }
-        PlayerAction::PingPong(PingPong {
+
+        Some(PlayerAction::PingPong(PingPong {
             bound, direction, ..
-        }) => Some(on_ping_pong_double_jump_action(
-            context,
-            state.last_known_pos.unwrap(),
-            bound,
-            direction,
-        )),
-        PlayerAction::FamiliarsSwap(swapping) => Some((
+        })) => {
+            let last_pos = context.last_known_pos.unwrap();
+            update_from_ping_pong_action(
+                resources,
+                player,
+                minimap_state,
+                last_pos,
+                bound,
+                direction,
+            )
+        }
+
+        Some(PlayerAction::FamiliarsSwap(swapping)) => transition!(
+            player,
             Player::FamiliarsSwapping(FamiliarsSwapping::new(
                 swapping.swappable_slots,
-                swapping.swappable_rarities,
-            )),
-            false,
-        )),
-        PlayerAction::Panic(panic) => Some((Player::Panicking(Panicking::new(panic.to)), false)),
-        PlayerAction::Chat(chat) => Some((
-            Player::Chatting(Chatting::new(ChattingContent::from_string(chat.content))),
-            false,
-        )),
+                swapping.swappable_rarities
+            ))
+        ),
+
+        Some(PlayerAction::Panic(panic)) => {
+            transition!(player, Player::Panicking(Panicking::new(panic.to)))
+        }
+
+        Some(PlayerAction::Chat(chat)) => transition!(
+            player,
+            Player::Chatting(Chatting::new(ChattingContent::from_string(chat.content)))
+        ),
+
+        None => (),
     }
 }
 

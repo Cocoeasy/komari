@@ -9,18 +9,28 @@ use opencv::core::{MatTraitConst, Point, Rect, Vec4b};
 use strum::{Display, EnumIter};
 
 use crate::{
-    context::{Context, Contextual, ControlFlow},
+    ecs::Resources,
     player::Player,
     task::{Task, Update, update_detection_task},
+    transition, transition_if, try_ok_transition,
 };
 
+/// An entity that contains skill-related data.
 #[derive(Debug)]
-pub struct SkillState {
+pub struct SkillEntity {
+    pub state: Skill,
+    pub context: SkillContext,
+}
+
+pub type SkillEntities = [SkillEntity; SkillKind::COUNT];
+
+#[derive(Debug)]
+pub struct SkillContext {
     kind: SkillKind,
     task: Option<Task<Result<(Point, Vec4b)>>>,
 }
 
-impl SkillState {
+impl SkillContext {
     pub fn new(kind: SkillKind) -> Self {
         Self { kind, task: None }
     }
@@ -43,77 +53,69 @@ impl SkillKind {
     pub const COUNT: usize = mem::variant_count::<SkillKind>();
 }
 
-impl Index<SkillKind> for [Skill; SkillKind::COUNT] {
-    type Output = Skill;
+impl Index<SkillKind> for SkillEntities {
+    type Output = SkillEntity;
 
     fn index(&self, index: SkillKind) -> &Self::Output {
         self.get(index as usize).unwrap()
     }
 }
 
-impl IndexMut<SkillKind> for [Skill; SkillKind::COUNT] {
+impl IndexMut<SkillKind> for SkillEntities {
     fn index_mut(&mut self, index: SkillKind) -> &mut Self::Output {
         self.get_mut(index as usize).unwrap()
     }
 }
 
-impl Contextual for Skill {
-    type Persistent = SkillState;
+pub fn run_system(resources: &Resources, skill: &mut SkillEntity, player_state: Player) {
+    transition_if!(matches!(player_state, Player::CashShopThenExit(_)));
 
-    fn update(self, context: &Context, state: &mut SkillState) -> ControlFlow<Self> {
-        let next = if matches!(context.player, Player::CashShopThenExit(_, _)) {
-            self
-        } else {
-            update_context(self, context, state)
-        };
-        ControlFlow::Next(next)
+    match skill.state {
+        Skill::Detecting => update_detection_state(resources, skill),
+        Skill::Idle(anchor_point, anchor_pixel) => {
+            update_idle_state(resources, skill, anchor_point, anchor_pixel);
+        }
+        Skill::Cooldown => update_detection_state(resources, skill),
     }
 }
 
-fn update_context(contextual: Skill, context: &Context, state: &mut SkillState) -> Skill {
-    match contextual {
-        Skill::Detecting => update_detection(contextual, context, state, Skill::Idle),
-        Skill::Idle(anchor_point, anchor_pixel) => {
-            let Ok(pixel) = context.detector_unwrap().mat().at_pt::<Vec4b>(anchor_point) else {
-                return Skill::Detecting;
-            };
-            if !anchor_match(*pixel, anchor_pixel) {
-                debug!(target: "skill", "assume skill to be on cooldown {:?} != {:?}, could be false positive", (anchor_point, anchor_pixel), pixel);
-                // assume it is on cooldown
-                Skill::Cooldown
-            } else {
-                Skill::Idle(anchor_point, anchor_pixel)
-            }
-        }
-        Skill::Cooldown => update_detection(contextual, context, state, Skill::Idle),
-    }
+fn update_idle_state(
+    resources: &Resources,
+    skill: &mut SkillEntity,
+    anchor_point: Point,
+    anchor_pixel: Vec4b,
+) {
+    let result = resources.detector().mat().at_pt::<Vec4b>(anchor_point);
+    let pixel = try_ok_transition!(skill, Skill::Detecting, result);
+
+    transition_if!(
+        skill,
+        Skill::Idle(anchor_point, anchor_pixel),
+        Skill::Cooldown,
+        anchor_match(*pixel, anchor_pixel)
+    );
 }
 
 #[inline]
-fn update_detection(
-    contextual: Skill,
-    context: &Context,
-    state: &mut SkillState,
-    on_next: impl FnOnce(Point, Vec4b) -> Skill,
-) -> Skill {
-    let kind = state.kind;
-    let update = update_detection_task(context, 1000, &mut state.task, move |detector| {
+fn update_detection_state(resources: &Resources, skill: &mut SkillEntity) {
+    let kind = skill.context.kind;
+    let task = &mut skill.context.task;
+    let update = update_detection_task(resources, 1000, task, move |detector| {
         let bbox = match kind {
             SkillKind::ErdaShower => detector.detect_erda_shower()?,
         };
         Ok(get_anchor(detector.mat(), bbox))
     });
+
     match update {
-        Update::Ok((point, pixel)) => on_next(point, pixel),
-        Update::Err(err) => {
-            if err.downcast::<f64>().unwrap() < 0.52 {
-                Skill::Detecting
-            } else {
-                contextual
-            }
-        }
-        Update::Pending => contextual,
-    }
+        Update::Ok((point, pixel)) => transition!(skill, Skill::Idle(point, pixel)),
+        Update::Err(err) => transition_if!(
+            skill,
+            Skill::Detecting,
+            err.downcast::<f64>().unwrap() < 0.52
+        ),
+        Update::Pending => (),
+    };
 }
 
 #[inline]
@@ -138,14 +140,16 @@ fn get_anchor(mat: &impl MatTraitConst, bbox: Rect) -> (Point, Vec4b) {
 
 #[cfg(test)]
 mod tests {
-    use std::{assert_matches::assert_matches, time::Duration};
+    use std::assert_matches::assert_matches;
+    use std::time::Duration;
 
     use anyhow::{Context as AnyhowContext, anyhow};
-    use opencv::core::{CV_8UC4, Mat, MatExprTraitConst, MatTrait};
+    use opencv::core::{CV_8UC4, Mat, MatExprTraitConst, MatTrait, Rect, Vec4b};
     use tokio::time::advance;
 
     use super::*;
     use crate::detect::MockDetector;
+    use crate::ecs::Resources;
 
     fn create_test_mat_bbox(center_pixel: u8) -> (Mat, Rect) {
         let mut mat = Mat::zeros(100, 100, CV_8UC4).unwrap().to_mat().unwrap();
@@ -158,96 +162,113 @@ mod tests {
     fn create_mock_detector(center_pixel: u8, error: Option<f64>) -> (MockDetector, Rect) {
         let mut detector = MockDetector::new();
         let (mat, rect) = create_test_mat_bbox(center_pixel);
+
+        detector.expect_mat().return_const(mat.into());
         detector
             .expect_clone()
             .returning(move || create_mock_detector(center_pixel, error).0);
-        detector.expect_mat().return_const(mat.into());
-        if let Some(error) = error {
-            detector
-                .expect_detect_erda_shower()
-                .returning(move || Err(anyhow!("")).context(error));
-        } else {
-            detector
-                .expect_detect_erda_shower()
-                .returning(move || Ok(rect));
-        }
+        detector.expect_detect_erda_shower().returning(move || {
+            if let Some(error) = error {
+                Err(anyhow!("error")).context(error)
+            } else {
+                Ok(rect)
+            }
+        });
+
         (detector, rect)
     }
 
-    async fn advance_task(contextual: Skill, context: &Context, state: &mut SkillState) -> Skill {
-        let mut skill = update_context(contextual, context, state);
-        while !state.task.as_ref().unwrap().completed() {
-            skill = update_context(skill, context, state);
+    async fn run_system_until_task_completed(resources: &Resources, skill: &mut SkillEntity) {
+        while !skill
+            .context
+            .task
+            .as_ref()
+            .map_or(false, |task| task.completed())
+        {
+            run_system(resources, skill, Player::Idle);
             advance(Duration::from_millis(1000)).await;
         }
-        skill
     }
 
     #[tokio::test(start_paused = true)]
-    async fn skill_detecting_to_idle() {
+    async fn run_system_detecting_to_idle() {
         let (detector, rect) = create_mock_detector(255, None);
-        let context = Context::new(None, Some(detector));
-        let mut state = SkillState::new(SkillKind::ErdaShower);
+        let resources = Resources::new(None, Some(detector));
+        let mut skill = SkillEntity {
+            state: Skill::Detecting,
+            context: SkillContext::new(SkillKind::ErdaShower),
+        };
 
-        let skill = advance_task(Skill::Detecting, &context, &mut state).await;
-        assert_matches!(skill, Skill::Idle(_, _));
-        match skill {
+        run_system_until_task_completed(&resources, &mut skill).await;
+
+        match skill.state {
             Skill::Idle(point, pixel) => {
                 assert_eq!(point, (rect.tl() + rect.br()) / 2);
                 assert_eq!(pixel, Vec4b::all(255));
             }
-            _ => unreachable!(),
+            _ => panic!(),
         }
     }
 
     #[test]
-    fn skill_idle_to_cooldown() {
+    fn run_system_idle_to_cooldown() {
         let (detector, rect) = create_mock_detector(200, None);
-        let context = Context::new(None, Some(detector));
-        let mut state = SkillState::new(SkillKind::ErdaShower);
+        let resources = Resources::new(None, Some(detector));
+        let mut skill = SkillEntity {
+            state: Skill::Idle((rect.tl() + rect.br()) / 2, Vec4b::all(255)),
+            context: SkillContext::new(SkillKind::ErdaShower),
+        };
 
-        let skill = update_context(
-            Skill::Idle((rect.tl() + rect.br()) / 2, Vec4b::all(255)),
-            &context,
-            &mut state,
-        );
-        assert_matches!(skill, Skill::Cooldown);
+        run_system(&resources, &mut skill, Player::Idle);
+
+        assert_matches!(skill.state, Skill::Cooldown);
     }
 
     #[tokio::test(start_paused = true)]
-    async fn skill_cooldown_to_detecting() {
-        let mut state = SkillState::new(SkillKind::ErdaShower);
+    async fn run_system_cooldown_to_detecting() {
         let (detector, _) = create_mock_detector(255, Some(0.51));
-        let context = Context::new(None, Some(detector));
+        let resources = Resources::new(None, Some(detector));
+        let mut skill = SkillEntity {
+            state: Skill::Cooldown,
+            context: SkillContext::new(SkillKind::ErdaShower),
+        };
 
-        let skill = advance_task(Skill::Cooldown, &context, &mut state).await;
-        assert_matches!(skill, Skill::Detecting);
+        run_system_until_task_completed(&resources, &mut skill).await;
+
+        assert_matches!(skill.state, Skill::Detecting);
     }
 
     #[tokio::test(start_paused = true)]
-    async fn skill_cooldown_recheck_ok() {
-        let mut state = SkillState::new(SkillKind::ErdaShower);
+    async fn run_system_cooldown_to_idle() {
         let (detector, rect) = create_mock_detector(255, None);
-        let context = Context::new(None, Some(detector));
+        let resources = Resources::new(None, Some(detector));
+        let mut skill = SkillEntity {
+            state: Skill::Cooldown,
+            context: SkillContext::new(SkillKind::ErdaShower),
+        };
 
-        let skill = advance_task(Skill::Cooldown, &context, &mut state).await;
-        assert_matches!(skill, Skill::Idle(_, _));
-        match skill {
+        run_system_until_task_completed(&resources, &mut skill).await;
+
+        match skill.state {
             Skill::Idle(point, pixel) => {
                 assert_eq!(point, (rect.tl() + rect.br()) / 2);
                 assert_eq!(pixel, Vec4b::all(255));
             }
-            _ => unreachable!(),
+            _ => panic!(),
         }
     }
 
     #[tokio::test(start_paused = true)]
-    async fn skill_cooldown_recheck_err() {
-        let mut state = SkillState::new(SkillKind::ErdaShower);
+    async fn run_system_cooldown_to_cooldown() {
         let (detector, _) = create_mock_detector(255, Some(0.52));
-        let context = Context::new(None, Some(detector));
+        let resources = Resources::new(None, Some(detector));
+        let mut skill = SkillEntity {
+            state: Skill::Cooldown,
+            context: SkillContext::new(SkillKind::ErdaShower),
+        };
 
-        let skill = advance_task(Skill::Cooldown, &context, &mut state).await;
-        assert_matches!(skill, Skill::Cooldown);
+        run_system_until_task_completed(&resources, &mut skill).await;
+
+        assert_matches!(skill.state, Skill::Cooldown);
     }
 }

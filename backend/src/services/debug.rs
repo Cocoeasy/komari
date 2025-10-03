@@ -13,9 +13,9 @@ use tokio::sync::broadcast::{self, Receiver, Sender};
 
 use crate::{
     DebugState,
-    context::Context,
     debug::{save_image_for_training, save_image_for_training_to, save_minimap_for_training},
     detect::{ArrowsCalibrating, ArrowsState, CachedDetector, Detector},
+    ecs::Resources,
     mat::OwnedMat,
 };
 
@@ -39,9 +39,9 @@ impl Default for DebugService {
 }
 
 impl DebugService {
-    pub fn poll(&mut self, context: &Context) {
+    pub fn poll(&mut self, resources: &Resources) {
         if let Some(id) = self.recording_id.clone() {
-            save_image_for_training_to(context.detector_unwrap().mat(), Some(id), false, false);
+            save_image_for_training_to(resources.detector().mat(), Some(id), false, false);
         }
 
         if let Some((calibrating, instant)) = self.infering_rune.as_ref().copied() {
@@ -51,7 +51,7 @@ impl DebugService {
                 return;
             }
 
-            match context.detector_unwrap().detect_rune_arrows(calibrating) {
+            match resources.detector().detect_rune_arrows(calibrating) {
                 Ok(ArrowsState::Complete(arrows)) => {
                     // TODO: Save
                     self.infering_rune = None;
@@ -70,7 +70,7 @@ impl DebugService {
         if self.state.is_empty() {
             let _ = self.state.send(DebugState {
                 is_recording: self.recording_id.is_some(),
-                is_rune_auto_saving: context.debug.auto_save_rune(),
+                is_rune_auto_saving: resources.debug.auto_save_rune(),
             });
         }
     }
@@ -79,12 +79,12 @@ impl DebugService {
         self.state.subscribe()
     }
 
-    pub fn set_auto_save_rune(&self, context: &Context, auto_save: bool) {
-        context.debug.set_auto_save_rune(auto_save);
+    pub fn set_auto_save_rune(&self, resources: &Resources, auto_save: bool) {
+        resources.debug.set_auto_save_rune(auto_save);
     }
 
-    pub fn capture_image(&self, context: &Context, is_grayscale: bool) {
-        if let Some(detector) = context.detector.as_ref() {
+    pub fn capture_image(&self, resources: &Resources, is_grayscale: bool) {
+        if let Some(detector) = resources.detector.as_ref() {
             save_image_for_training(detector.mat(), is_grayscale, false);
         }
     }
@@ -101,8 +101,8 @@ impl DebugService {
         self.infering_rune = Some((ArrowsCalibrating::default(), Instant::now()));
     }
 
-    pub fn infer_minimap(&self, context: &Context) {
-        if let Some(detector) = context.detector.as_ref()
+    pub fn infer_minimap(&self, resources: &Resources) {
+        if let Some(detector) = resources.detector.as_ref()
             && let Some(bbox) = detector.detect_minimap(160).ok()
         {
             save_minimap_for_training(detector.mat(), bbox);
