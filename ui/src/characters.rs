@@ -491,7 +491,6 @@ fn SectionMovement(
 ) -> Element {
     rsx! {
         Section { name: "Movement",
-
             div { class: "grid grid-cols-3 gap-4",
                 CharactersCheckbox {
                     label: "Up jump is flight",
@@ -503,6 +502,17 @@ fn SectionMovement(
                         });
                     },
                     value: character_view().up_jump_is_flight,
+                }
+                CharactersCheckbox {
+                    label: "Up jump's skill should jump first",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |up_jump_specific_key_should_jump| {
+                        save_character(Character {
+                            up_jump_specific_key_should_jump,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().up_jump_specific_key_should_jump,
                 }
                 CharactersCheckbox {
                     label: "Disable teleport on fall",

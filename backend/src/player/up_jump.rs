@@ -76,7 +76,9 @@ pub struct UpJumping {
 impl UpJumping {
     pub fn new(moving: Moving, resources: &Resources, player_context: &PlayerContext) -> Self {
         let (y_distance, _) = moving.y_distance_direction_from(true, moving.pos);
-        let spam_delay = if y_distance <= SOFT_UP_JUMP_THRESHOLD {
+        let spam_delay = if !player_context.config.up_jump_specific_key_should_jump
+            && y_distance <= SOFT_UP_JUMP_THRESHOLD
+        {
             SOFT_SPAM_DELAY
         } else {
             SPAM_DELAY
@@ -84,7 +86,7 @@ impl UpJumping {
         let auto_mob_wait_completion =
             player_context.has_auto_mob_action_only() && resources.rng.random_bool(0.5);
         let kind = up_jumping_kind(
-            player_context.config.upjump_key,
+            player_context.config.up_jump_key,
             player_context.config.teleport_key.is_some(),
         );
 
@@ -118,8 +120,9 @@ pub fn update_up_jumping_state(
     let Player::UpJumping(mut up_jumping) = player.state else {
         panic!("state is not up jumping");
     };
-    let up_jump_key = player.context.config.upjump_key;
+    let up_jump_key = player.context.config.up_jump_key;
     let jump_key = player.context.config.jump_key;
+    let should_jump = player.context.config.up_jump_specific_key_should_jump;
     let is_flight = player.context.config.up_jump_is_flight;
 
     match next_moving_lifecycle_with_axis(
@@ -179,7 +182,7 @@ pub fn update_up_jumping_state(
                 }
                 UpJumpingKind::SpecificKey => {
                     resources.input.send_key_down(KeyKind::Up);
-                    if is_flight {
+                    if is_flight || should_jump {
                         resources.input.send_key(jump_key);
                     }
                 }
@@ -284,7 +287,8 @@ fn update_up_jump(
     y_direction: i32,
 ) {
     let jump_key = context.config.jump_key;
-    let up_jump_key = context.config.upjump_key;
+    let up_jump_key = context.config.up_jump_key;
+    let should_jump = context.config.up_jump_specific_key_should_jump;
     let is_flight = context.config.up_jump_is_flight;
 
     if moving.completed {
@@ -322,10 +326,12 @@ fn update_up_jump(
         }
         UpJumpingKind::SpecificKey => {
             if !is_flight {
-                resources
-                    .input
-                    .send_key(up_jump_key.expect("has up jump key"));
-                moving.completed = true;
+                if !should_jump || moving.timeout.total >= up_jumping.spam_delay {
+                    resources
+                        .input
+                        .send_key(up_jump_key.expect("has up jump key"));
+                    moving.completed = true;
+                }
             } else {
                 update_flying(
                     resources,
@@ -348,7 +354,7 @@ fn update_mage_up_jump(
     y_direction: i32,
 ) {
     let jump_key = context.config.jump_key;
-    let up_jump_key = context.config.upjump_key;
+    let up_jump_key = context.config.up_jump_key;
     let teleport_key = context.config.teleport_key.expect("has teleport key");
 
     match mage.state {
@@ -479,7 +485,7 @@ mod tests {
             spam_delay: SPAM_DELAY,
             auto_mob_wait_completion: false,
         });
-        player.context.config.upjump_key = Some(KeyKind::C);
+        player.context.config.up_jump_key = Some(KeyKind::C);
         let mut keys = MockInput::new();
         keys.expect_send_key_down()
             .withf(|k| *k == KeyKind::Up)
@@ -600,7 +606,7 @@ mod tests {
             spam_delay: SPAM_DELAY,
             auto_mob_wait_completion: false,
         });
-        player.context.config.upjump_key = Some(KeyKind::C);
+        player.context.config.up_jump_key = Some(KeyKind::C);
         let mut keys = MockInput::new();
         keys.expect_send_key().withf(|k| *k == KeyKind::C).once();
         let resources = Resources::new(Some(keys), None);

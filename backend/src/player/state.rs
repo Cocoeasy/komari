@@ -109,6 +109,11 @@ pub struct PlayerConfiguration {
     pub class: Class,
     /// Whether up jump requires helding down the key for flight.
     pub up_jump_is_flight: bool,
+    /// Whether up jump using a specific key (e.g. Hero, Night Lord, ... classes) should do a jump
+    /// before sending the key.
+    ///
+    /// This also means the up jump can be performed mid-air.
+    pub up_jump_specific_key_should_jump: bool,
     /// Whether to disable [`Player::Adjusting`].
     pub disable_adjusting: bool,
     /// Whether to disable teleportation in [`Player::Falling`].
@@ -141,7 +146,7 @@ pub struct PlayerConfiguration {
     /// Replaces the previously default [`KeyKind::Space`] key.
     pub jump_key: KeyKind,
     /// The up jump key with [`None`] indicating composite jump (Up arrow + Double Space).
-    pub upjump_key: Option<KeyKind>,
+    pub up_jump_key: Option<KeyKind>,
     /// The cash shop key.
     pub cash_shop_key: KeyKind,
     /// The familiar key.
@@ -165,6 +170,7 @@ impl Default for PlayerConfiguration {
             disable_adjusting: false,
             disable_teleport_on_fall: false,
             up_jump_is_flight: false,
+            up_jump_specific_key_should_jump: false,
             rune_platforms_pathing: false,
             rune_platforms_pathing_up_jump_only: false,
             auto_mob_platforms_pathing: false,
@@ -176,7 +182,7 @@ impl Default for PlayerConfiguration {
             grappling_key: None,
             teleport_key: None,
             jump_key: KeyKind::A,
-            upjump_key: None,
+            up_jump_key: None,
             cash_shop_key: KeyKind::A,
             familiar_key: KeyKind::A,
             to_town_key: KeyKind::A,

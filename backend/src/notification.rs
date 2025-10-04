@@ -299,7 +299,7 @@ async fn post_notification(notification: ScheduledNotification) -> Result<(), Er
 mod test {
     use std::{cell::RefCell, rc::Rc, time::Duration};
 
-    use opencv::core::Mat;
+    use opencv::core::{CV_8UC3, Mat, MatExprTraitConst};
     use tokio::time::{Instant, advance};
 
     use super::{DiscordNotification, NotificationKind, ScheduledNotification};
@@ -370,7 +370,9 @@ mod test {
 
         advance(Duration::from_secs(4)).await;
         // Skip frame 1 because deadline passed to frame 2
-        noti.update(Some(&OwnedMat::from(Mat::default())));
+        noti.update(Some(&OwnedMat::from(
+            Mat::zeros(1, 1, CV_8UC3).unwrap().to_mat().unwrap(),
+        )));
         let scheduled_guard = noti.scheduled.lock().unwrap();
         let scheduled = scheduled_guard.first().unwrap();
         assert!(scheduled.frames[0].0.is_none());
@@ -380,7 +382,9 @@ mod test {
 
         // Frame 3
         advance(Duration::from_secs(4)).await;
-        noti.update(Some(&OwnedMat::from(Mat::default())));
+        noti.update(Some(&OwnedMat::from(
+            Mat::zeros(1, 1, CV_8UC3).unwrap().to_mat().unwrap(),
+        )));
         let scheduled = noti.scheduled.lock().unwrap();
         let scheduled = scheduled.first().unwrap();
         assert!(scheduled.frames[0].0.is_none());

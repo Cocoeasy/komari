@@ -41,11 +41,13 @@ impl CharacterService for DefaultCharacterService {
             player_context.config.disable_adjusting = character.disable_adjusting;
             player_context.config.disable_teleport_on_fall = character.disable_teleport_on_fall;
             player_context.config.up_jump_is_flight = character.up_jump_is_flight;
+            player_context.config.up_jump_specific_key_should_jump =
+                character.up_jump_specific_key_should_jump;
             player_context.config.interact_key = character.interact_key.key.into();
             player_context.config.grappling_key = character.ropelift_key.map(|key| key.key.into());
             player_context.config.teleport_key = character.teleport_key.map(|key| key.key.into());
             player_context.config.jump_key = character.jump_key.key.into();
-            player_context.config.upjump_key = character.up_jump_key.map(|key| key.key.into());
+            player_context.config.up_jump_key = character.up_jump_key.map(|key| key.key.into());
             player_context.config.cash_shop_key = character.cash_shop_key.key.into();
             player_context.config.familiar_key = character.familiar_menu_key.key.into();
             player_context.config.to_town_key = character.to_town_key.key.into();
@@ -74,6 +76,7 @@ mod tests {
             disable_adjusting: true,
             disable_teleport_on_fall: true,
             up_jump_is_flight: true,
+            up_jump_specific_key_should_jump: true,
             interact_key: KeyBindingConfiguration {
                 key: KeyBinding::Z,
                 ..Default::default()
@@ -158,11 +161,15 @@ mod tests {
             character.disable_teleport_on_fall
         );
         assert_eq!(state.config.up_jump_is_flight, character.up_jump_is_flight);
+        assert_eq!(
+            state.config.up_jump_specific_key_should_jump,
+            character.up_jump_specific_key_should_jump
+        );
         assert_eq!(state.config.interact_key, KeyKind::Z);
         assert_eq!(state.config.grappling_key, Some(KeyKind::V));
         assert_eq!(state.config.teleport_key, Some(KeyKind::X));
         assert_eq!(state.config.jump_key, KeyKind::C);
-        assert_eq!(state.config.upjump_key, Some(KeyKind::A));
+        assert_eq!(state.config.up_jump_key, Some(KeyKind::A));
         assert_eq!(state.config.cash_shop_key, KeyKind::B);
         assert_eq!(state.config.familiar_key, KeyKind::N);
         assert_eq!(state.config.to_town_key, KeyKind::M);
