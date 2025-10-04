@@ -24,11 +24,11 @@ pub trait MinimapService: Debug {
     fn preset(&self) -> Option<String>;
 
     /// Sets new `minimap` and `preset` to be used.
-    fn set_minimap_preset(&mut self, minimap: Option<MinimapData>, preset: Option<String>);
+    fn update_minimap_preset(&mut self, minimap: Option<MinimapData>, preset: Option<String>);
 
     /// Updates `minimap_context` and `player_context` with information from the currently in use
     /// [`MinimapData`] and preset.
-    fn update(&self, minimap_context: &mut MinimapContext, player_context: &mut PlayerContext);
+    fn apply(&self, minimap_context: &mut MinimapContext, player_context: &mut PlayerContext);
 
     /// Re-detects current minimap.
     fn redetect(&self, minimap: &mut MinimapEntity);
@@ -62,12 +62,12 @@ impl MinimapService for DefaultMinimapService {
         self.preset.clone()
     }
 
-    fn set_minimap_preset(&mut self, minimap: Option<MinimapData>, preset: Option<String>) {
+    fn update_minimap_preset(&mut self, minimap: Option<MinimapData>, preset: Option<String>) {
         self.minimap = minimap;
         self.preset = preset;
     }
 
-    fn update(&self, minimap_context: &mut MinimapContext, player_context: &mut PlayerContext) {
+    fn apply(&self, minimap_context: &mut MinimapContext, player_context: &mut PlayerContext) {
         let platforms = self
             .minimap()
             .map(|data| {
@@ -170,7 +170,7 @@ mod tests {
         let minimap = mock_minimap_data();
         let preset = Some("custom".to_string());
 
-        service.set_minimap_preset(Some(minimap.clone()), preset.clone());
+        service.update_minimap_preset(Some(minimap.clone()), preset.clone());
 
         assert_eq!(service.minimap, Some(minimap));
         assert_eq!(service.preset, preset);
@@ -205,7 +205,7 @@ mod tests {
                 y: 10,
             })]);
 
-        service.update(&mut minimap.context, &mut player_context);
+        service.apply(&mut minimap.context, &mut player_context);
 
         assert!(service.minimap.is_none());
         assert!(service.preset.is_none());
@@ -220,7 +220,7 @@ mod tests {
         player_context.config.rune_platforms_pathing = true;
         player_context.config.rune_platforms_pathing_up_jump_only = true;
 
-        service.update(&mut minimap_context, &mut player_context);
+        service.apply(&mut minimap_context, &mut player_context);
         assert!(player_context.config.rune_platforms_pathing); // Doesn't change
         assert!(player_context.config.rune_platforms_pathing_up_jump_only); // Doesn't change
     }
@@ -234,7 +234,7 @@ mod tests {
         let mut minimap_context = MinimapContext::default();
         let mut player_state = PlayerContext::default();
 
-        service.update(&mut minimap_context, &mut player_state);
+        service.apply(&mut minimap_context, &mut player_state);
 
         assert!(player_state.config.rune_platforms_pathing);
         assert!(player_state.config.rune_platforms_pathing_up_jump_only);

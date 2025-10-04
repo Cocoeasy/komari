@@ -30,7 +30,7 @@ pub trait RotatorService: Debug {
 
     /// Updates `rotator` with data from `minimap`, `character`, `settings`, and the currently
     /// in-use actions and buffs.
-    fn update<'a>(
+    fn apply<'a>(
         &self,
         rotator: &mut dyn Rotator,
         minimap: Option<&'a Minimap>,
@@ -67,7 +67,7 @@ impl RotatorService for DefaultRotatorService {
         self.buffs = character.map(buffs_from).unwrap_or_default();
     }
 
-    fn update<'a>(
+    fn apply<'a>(
         &self,
         rotator: &mut dyn Rotator,
         minimap: Option<&'a Minimap>,
@@ -326,7 +326,7 @@ mod tests {
                 .once()
                 .return_const(());
 
-            service.update(
+            service.apply(
                 &mut rotator,
                 Some(&minimap),
                 Some(&character),
@@ -349,7 +349,7 @@ mod tests {
 
         let mut service = DefaultRotatorService::default();
         service.buffs = buffs;
-        service.update(&mut rotator, None, None, &Settings::default());
+        service.apply(&mut rotator, None, None, &Settings::default());
     }
 
     #[test]
@@ -370,7 +370,7 @@ mod tests {
             .return_const(());
 
         let service = DefaultRotatorService::default();
-        service.update(&mut rotator, None, Some(&character), &Settings::default());
+        service.apply(&mut rotator, None, Some(&character), &Settings::default());
     }
 
     #[test]
@@ -396,7 +396,7 @@ mod tests {
             .return_const(());
 
         let service = DefaultRotatorService::default();
-        service.update(&mut rotator, None, None, &settings_clone);
+        service.apply(&mut rotator, None, None, &settings_clone);
     }
 
     #[test]
@@ -418,7 +418,7 @@ mod tests {
             .return_const(());
 
         let service = DefaultRotatorService::default();
-        service.update(&mut rotator, None, Some(&character), &Settings::default());
+        service.apply(&mut rotator, None, Some(&character), &Settings::default());
     }
 
     #[test]
@@ -436,7 +436,7 @@ mod tests {
             .return_const(());
 
         let service = DefaultRotatorService::default();
-        service.update(&mut rotator, Some(&minimap), None, &Settings::default());
+        service.apply(&mut rotator, Some(&minimap), None, &Settings::default());
     }
 
     #[test]
@@ -455,7 +455,7 @@ mod tests {
             .return_const(());
 
         let service = DefaultRotatorService::default();
-        service.update(&mut rotator, None, None, &settings);
+        service.apply(&mut rotator, None, None, &settings);
     }
 
     #[test]

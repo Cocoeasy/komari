@@ -165,7 +165,7 @@ impl DefaultRequestHandler<'_> {
                         self.args.capture,
                     );
                     self.service.bot.update(&self.service.settings.settings());
-                    self.service.rotator.update(
+                    self.service.rotator.apply(
                         self.args.rotator,
                         self.service.minimap.minimap(),
                         self.service.character.character(),
@@ -428,8 +428,8 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_update_minimap(&mut self, preset: Option<String>, minimap: Option<Minimap>) {
-        self.service.minimap.set_minimap_preset(minimap, preset);
-        self.service.minimap.update(
+        self.service.minimap.update_minimap_preset(minimap, preset);
+        self.service.minimap.apply(
             &mut self.args.world.minimap.context,
             &mut self.args.world.player.context,
         );
@@ -444,7 +444,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             .navigator
             .mark_dirty_with_destination(minimap.and_then(|minimap| minimap.paths_id_index));
 
-        self.service.rotator.update(
+        self.service.rotator.apply(
             self.args.rotator,
             minimap,
             character,
@@ -494,7 +494,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
         self.service
             .rotator
-            .update(self.args.rotator, minimap, character, &settings);
+            .apply(self.args.rotator, minimap, character, &settings);
     }
 
     fn on_redetect_minimap(&mut self) {
