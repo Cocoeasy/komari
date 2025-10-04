@@ -22,11 +22,12 @@ use crate::{
     buff::{self, Buff, BuffContext, BuffEntity, BuffKind},
     database::{query_seeds, query_settings},
     detect::CachedDetector,
-    ecs::{Operation, Resources, World, WorldEvent},
+    ecs::{Resources, World, WorldEvent},
     mat::OwnedMat,
     minimap::{self, Minimap, MinimapContext, MinimapEntity},
     navigator::{DefaultNavigator, Navigator},
     notification::DiscordNotification,
+    operation::Operation,
     player::{self, Player, PlayerContext, PlayerEntity},
     rng::Rng,
     rotator::{DefaultRotator, Rotator},
@@ -149,7 +150,7 @@ fn systems_loop() {
             let was_minimap_idle = matches!(world.minimap.state, Minimap::Idle(_));
 
             resources.detector = Some(Box::new(detector));
-            resources.operation = resources.operation.update();
+            resources.operation = resources.operation.update_tick();
 
             minimap::run_system(&resources, &mut world.minimap, world.player.state);
             player::run_system(&resources, &mut world.player, &world.minimap, &world.buffs);

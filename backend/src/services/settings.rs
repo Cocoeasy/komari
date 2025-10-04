@@ -11,7 +11,7 @@ use platforms::{Window, capture::query_capture_name_window_pairs, input::InputKi
 use crate::{
     CaptureMode, InputMethod as DatabaseInputMethod, Settings,
     bridge::{Capture, Input, InputMethod, InputReceiver},
-    ecs::Operation,
+    operation::Operation,
 };
 
 /// A service to handle [`Settings`]-related incoming requests.
@@ -174,7 +174,7 @@ impl SettingsService for DefaultSettingsService {
         capture: &mut dyn Capture,
         new_settings: Settings,
     ) {
-        *operation = operation.update_current(
+        *operation = operation.update_from_mode(
             new_settings.cycle_run_stop,
             new_settings.cycle_run_duration_millis,
             new_settings.cycle_stop_duration_millis,

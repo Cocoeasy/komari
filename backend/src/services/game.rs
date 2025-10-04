@@ -14,8 +14,9 @@ use crate::{
     KeyBindingConfiguration, Minimap, Settings,
     bridge::InputReceiver,
     database_event_receiver,
-    ecs::{Operation, Resources, World},
+    ecs::{Resources, World},
     minimap,
+    operation::Operation,
     player::Quadrant,
     skill::SkillKind,
 };

@@ -2,18 +2,18 @@
 use std::cell::RefCell;
 #[cfg(test)]
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 use dyn_clone::clone_box;
 #[cfg(debug_assertions)]
 use opencv::core::Rect;
 
-use crate::{
-    CycleRunStopMode, bridge::Input, buff::BuffEntities, detect::Detector, minimap::MinimapEntity,
-    notification::DiscordNotification, player::PlayerEntity, rng::Rng, skill::SkillEntities,
-};
 #[cfg(test)]
 use crate::{Settings, bridge::MockInput, detect::MockDetector};
+use crate::{
+    bridge::Input, buff::BuffEntities, detect::Detector, minimap::MinimapEntity,
+    notification::DiscordNotification, operation::Operation, player::PlayerEntity, rng::Rng,
+    skill::SkillEntities,
+};
 #[cfg(debug_assertions)]
 use crate::{bridge::KeyKind, debug::save_rune_for_training};
 
@@ -80,137 +80,6 @@ macro_rules! try_ok_transition {
             }
         }
     };
-}
-
-/// Current operating state of the bot.
-#[derive(Debug, Clone, Copy)]
-pub enum Operation {
-    HaltUntil {
-        instant: Instant,
-        run_duration_millis: u64,
-        stop_duration_millis: u64,
-    },
-    TemporaryHalting {
-        resume: Duration,
-        run_duration_millis: u64,
-        stop_duration_millis: u64,
-        once: bool,
-    },
-    Halting,
-    Running,
-    RunUntil {
-        instant: Instant,
-        run_duration_millis: u64,
-        stop_duration_millis: u64,
-        once: bool,
-    },
-}
-
-impl Operation {
-    #[inline]
-    pub fn halting(&self) -> bool {
-        matches!(
-            self,
-            Operation::Halting | Operation::HaltUntil { .. } | Operation::TemporaryHalting { .. }
-        )
-    }
-
-    pub fn update_current(
-        self,
-        cycle_run_stop: CycleRunStopMode,
-        run_duration_millis: u64,
-        stop_duration_millis: u64,
-    ) -> Operation {
-        match self {
-            Operation::HaltUntil {
-                stop_duration_millis: current_stop_duration_millis,
-                ..
-            } => match cycle_run_stop {
-                CycleRunStopMode::None | CycleRunStopMode::Once => Operation::Halting,
-                CycleRunStopMode::Repeat => {
-                    if current_stop_duration_millis == stop_duration_millis {
-                        self
-                    } else {
-                        Operation::halt_until(run_duration_millis, stop_duration_millis)
-                    }
-                }
-            },
-            Operation::TemporaryHalting {
-                run_duration_millis: current_run_duration_millis,
-                ..
-            } => {
-                if current_run_duration_millis != run_duration_millis
-                    || matches!(cycle_run_stop, CycleRunStopMode::None)
-                {
-                    Operation::Halting
-                } else {
-                    self
-                }
-            }
-            Operation::Halting => Operation::Halting,
-            Operation::Running | Operation::RunUntil { .. } => match cycle_run_stop {
-                CycleRunStopMode::None => Operation::Running,
-                CycleRunStopMode::Once | CycleRunStopMode::Repeat => Operation::run_until(
-                    run_duration_millis,
-                    stop_duration_millis,
-                    matches!(cycle_run_stop, CycleRunStopMode::Once),
-                ),
-            },
-        }
-    }
-
-    pub fn update(self) -> Operation {
-        let now = Instant::now();
-        match self {
-            // Imply run/stop cycle enabled
-            Operation::HaltUntil {
-                instant,
-                run_duration_millis,
-                stop_duration_millis,
-            } => {
-                if now < instant {
-                    self
-                } else {
-                    Operation::run_until(run_duration_millis, stop_duration_millis, false)
-                }
-            }
-            // Imply run/stop cycle enabled
-            Operation::RunUntil {
-                instant,
-                run_duration_millis,
-                stop_duration_millis,
-                once,
-            } => {
-                if now < instant {
-                    self
-                } else if once {
-                    Operation::Halting
-                } else {
-                    Operation::halt_until(run_duration_millis, stop_duration_millis)
-                }
-            }
-            Operation::Halting | Operation::TemporaryHalting { .. } | Operation::Running => self,
-        }
-    }
-
-    #[inline]
-    fn halt_until(run_duration_millis: u64, stop_duration_millis: u64) -> Operation {
-        Operation::HaltUntil {
-            instant: Instant::now() + Duration::from_millis(stop_duration_millis),
-            run_duration_millis,
-            stop_duration_millis,
-        }
-    }
-
-    #[inline]
-    pub fn run_until(run_duration_millis: u64, stop_duration_millis: u64, once: bool) -> Operation {
-        Operation::RunUntil {
-            instant: Instant::now() + Duration::from_millis(run_duration_millis),
-            run_duration_millis,
-            stop_duration_millis,
-            once,
-        }
-    }
 }
 
 #[derive(Debug, Default)]

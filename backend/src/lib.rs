@@ -35,6 +35,7 @@ mod mat;
 mod minimap;
 mod navigator;
 mod notification;
+mod operation;
 mod pathing;
 mod player;
 mod rng;
