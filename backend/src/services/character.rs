@@ -13,10 +13,10 @@ pub trait CharacterService: Debug {
     fn character<'a>(&'a self) -> Option<&'a Character>;
 
     /// Sets a new `character` to be used.
-    fn set_character(&mut self, character: Option<Character>);
+    fn update_character(&mut self, character: Option<Character>);
 
     /// Updates `player_context` with information from the currently in use `[Character]`.
-    fn update(&self, player_context: &mut PlayerContext);
+    fn apply_character(&self, player_context: &mut PlayerContext);
 }
 
 #[derive(Debug, Default)]
@@ -29,12 +29,12 @@ impl CharacterService for DefaultCharacterService {
         self.character.as_ref()
     }
 
-    fn set_character(&mut self, character: Option<Character>) {
+    fn update_character(&mut self, character: Option<Character>) {
         self.character = character;
     }
 
     /// Updates `state` from currently using `[Character]`.
-    fn update(&self, player_context: &mut PlayerContext) {
+    fn apply_character(&self, player_context: &mut PlayerContext) {
         player_context.reset();
         if let Some(character) = self.character.as_ref() {
             player_context.config.class = character.class;
@@ -126,7 +126,7 @@ mod tests {
         assert!(service.character().is_none());
 
         let character = mock_character();
-        service.set_character(Some(character.clone()));
+        service.update_character(Some(character.clone()));
         let current = service.character().unwrap();
 
         assert_eq!(current, &mock_character());
@@ -138,7 +138,7 @@ mod tests {
         let mut state = PlayerContext::default();
         state.config.class = Class::Blaster;
 
-        service.update(&mut state);
+        service.apply_character(&mut state);
         assert_eq!(state.config.class, Class::Blaster);
     }
 
@@ -146,10 +146,10 @@ mod tests {
     fn update_from_character_some() {
         let mut service = DefaultCharacterService::default();
         let character = mock_character();
-        service.set_character(Some(character.clone()));
+        service.update_character(Some(character.clone()));
 
         let mut state = PlayerContext::default();
-        service.update(&mut state);
+        service.apply_character(&mut state);
 
         assert_eq!(state.config.class, character.class);
         assert_eq!(state.config.disable_adjusting, character.disable_adjusting);

@@ -4,7 +4,7 @@ use opencv::{
     core::{ToInputArray, Vector},
     imgcodecs::imencode_def,
 };
-use platforms::input::InputKind;
+use platforms::{Window, input::InputKind};
 use serenity::all::{CreateAttachment, EditInteractionResponse};
 use strum::EnumMessage;
 use tokio::{
@@ -17,8 +17,7 @@ use crate::{
     ActionKeyDirection, ActionKeyWith, Character, GameState, KeyBinding, LinkKeyBinding, Minimap,
     NavigationPath, RequestHandler, RotateKind, Settings,
     bot::{BotAction, BotCommandKind},
-    bridge::{Capture, DefaultCapture, DefaultInput, DefaultInputReceiver, InputMethod},
-    database::Seeds,
+    bridge::{Capture, DefaultInputReceiver, Input},
     ecs::{Resources, World, WorldEvent},
     navigator::Navigator,
     notification::NotificationKind,
@@ -74,34 +73,17 @@ pub struct DefaultService {
 }
 
 impl DefaultService {
-    pub fn new(
-        seeds: Seeds,
-        settings: Rc<RefCell<Settings>>,
-        event_rx: Receiver<WorldEvent>,
-    ) -> (Self, DefaultInput, DefaultCapture) {
-        let mut settings_service = DefaultSettingsService::new(settings.clone());
-
-        // Initialize with default window and input method
+    pub fn new(settings: Rc<RefCell<Settings>>, event_rx: Receiver<WorldEvent>) -> Self {
+        let settings_service = DefaultSettingsService::new(settings.clone());
         let window = settings_service.selected_window();
-        let input_method = InputMethod::Default(window, InputKind::Focused);
-        let mut input = DefaultInput::new(input_method, seeds);
-        let mut input_receiver = DefaultInputReceiver::new(window, InputKind::Focused);
-
+        let input_rx = DefaultInputReceiver::new(window, InputKind::Focused);
         let mut bot = BotService::default();
-        let mut capture = DefaultCapture::new(window);
-        // Update to current settings
-        settings_service.update_selected_window(
-            &mut input,
-            &mut input_receiver,
-            &mut capture,
-            None,
-        );
         bot.update(&settings_service.settings());
 
-        let service = Self {
+        Self {
             event_rx,
             pending_halt: None,
-            game: Box::new(DefaultGameService::new(input_receiver)),
+            game: Box::new(DefaultGameService::new(input_rx)),
             minimap: Box::new(DefaultMinimapService::default()),
             character: Box::new(DefaultCharacterService::default()),
             rotator: Box::new(DefaultRotatorService::default()),
@@ -110,9 +92,16 @@ impl DefaultService {
             bot,
             #[cfg(debug_assertions)]
             debug: DebugService::default(),
-        };
+        }
+    }
 
-        (service, input, capture)
+    pub fn update_input_and_capture(&mut self, input: &mut dyn Input, capture: &mut dyn Capture) {
+        self.settings
+            .apply_selected_window(input, self.game.input_receiver_mut(), capture);
+    }
+
+    pub fn selected_window(&self) -> Window {
+        self.settings.selected_window()
     }
 
     #[inline]
@@ -168,12 +157,12 @@ impl DefaultRequestHandler<'_> {
                 }
                 GameEvent::CharacterUpdated(character) => self.on_update_character(character),
                 GameEvent::SettingsUpdated(settings) => {
-                    self.service.settings.update(
+                    self.service.settings.update_settings(settings);
+                    self.service.settings.apply_settings(
                         &mut self.args.resources.operation,
                         self.args.resources.input.as_mut(),
                         self.service.game.input_receiver_mut(),
                         self.args.capture,
-                        settings,
                     );
                     self.service.bot.update(&self.service.settings.settings());
                     self.service.rotator.update(
@@ -484,10 +473,10 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_update_character(&mut self, character: Option<Character>) {
-        self.service.character.set_character(character);
+        self.service.character.update_character(character);
         self.service
             .character
-            .update(&mut self.args.world.player.context);
+            .apply_character(&mut self.args.world.player.context);
 
         let character = self.service.character.character();
         let minimap = self.service.minimap.minimap();
@@ -534,11 +523,11 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_select_capture_handle(&mut self, index: Option<usize>) {
-        self.service.settings.update_selected_window(
+        self.service.settings.update_selected_window(index);
+        self.service.settings.apply_selected_window(
             self.args.resources.input.as_mut(),
             self.service.game.input_receiver_mut(),
             self.args.capture,
-            index,
         );
     }
 

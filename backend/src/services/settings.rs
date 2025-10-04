@@ -20,10 +20,26 @@ pub trait SettingsService: Debug {
     /// Gets the current [`Settings`] in use.
     fn settings(&self) -> Ref<'_, Settings>;
 
+    /// Updates the currently in use [`Settings`] with `new_settings`.
+    fn update_settings(&mut self, settings: Settings);
+
+    /// Updates `operation`, `input`, `input_receiver` and `capture` to use the
+    /// current [`Settings`].
+    fn apply_settings(
+        &self,
+        operation: &mut Operation,
+        input: &mut dyn Input,
+        input_receiver: &mut dyn InputReceiver,
+        capture: &mut dyn Capture,
+    );
+
     /// Gets a list of [`Window`] names to be used for selection.
     ///
     /// The index of a name corresponds to a [`Window`].
     fn window_names(&self) -> Vec<String>;
+
+    /// Updates the list available of [`Window`]s from platform.
+    fn update_windows(&mut self);
 
     /// Gets the current selected [`Window`] index.
     fn selected_window_index(&self) -> Option<usize>;
@@ -33,27 +49,15 @@ pub trait SettingsService: Debug {
     /// If none is selected, the default [`Window`] is returned.
     fn selected_window(&self) -> Window;
 
-    /// Updates the list available of [`Window`]s from platform.
-    fn update_windows(&mut self);
+    /// Updates the selected [`Window`] specified by `index`.
+    fn update_selected_window(&mut self, index: Option<usize>);
 
-    /// Updates `input`, `input_receiver` and `capture` to use the [`Window`] specified by `index`.
-    fn update_selected_window(
-        &mut self,
+    /// Updates `input`, `input_receiver` and `capture` to use the currently selected [`Window`].
+    fn apply_selected_window(
+        &self,
         input: &mut dyn Input,
-        input_receiver: &mut dyn InputReceiver,
+        input_rx: &mut dyn InputReceiver,
         capture: &mut dyn Capture,
-        index: Option<usize>,
-    );
-
-    /// Updates the currently in use [`Settings`] with `new_settings` and configures `operation`,
-    /// `input`, `input_receiver` and `capture` to reflect the updated [`Settings`].
-    fn update(
-        &mut self,
-        operation: &mut Operation,
-        input: &mut dyn Input,
-        input_receiver: &mut dyn InputReceiver,
-        capture: &mut dyn Capture,
-        new_settings: Settings,
     );
 }
 
@@ -96,7 +100,7 @@ impl DefaultSettingsService {
     fn update_inputs(
         &self,
         input: &mut dyn Input,
-        input_receiver: &mut dyn InputReceiver,
+        input_rx: &mut dyn InputReceiver,
         capture: &dyn Capture,
     ) {
         let settings = self.settings();
@@ -106,7 +110,7 @@ impl DefaultSettingsService {
             (self.selected_window(), InputKind::Focused)
         };
 
-        input_receiver.set_window_and_input_kind(window, kind);
+        input_rx.set_window_and_input_kind(window, kind);
         match settings.input_method {
             DatabaseInputMethod::Default => {
                 input.set_method(InputMethod::Default(window, kind));
@@ -126,12 +130,38 @@ impl SettingsService for DefaultSettingsService {
         self.settings.borrow()
     }
 
+    fn update_settings(&mut self, settings: Settings) {
+        *self.settings.borrow_mut() = settings;
+    }
+
+    fn apply_settings(
+        &self,
+        operation: &mut Operation,
+        input: &mut dyn Input,
+        input_receiver: &mut dyn InputReceiver,
+        capture: &mut dyn Capture,
+    ) {
+        let settings = self.settings();
+        *operation = operation.update_from_mode(
+            settings.cycle_run_stop,
+            settings.cycle_run_duration_millis,
+            settings.cycle_stop_duration_millis,
+        );
+        self.update_capture(capture, false);
+        self.update_inputs(input, input_receiver, capture);
+    }
+
     fn window_names(&self) -> Vec<String> {
         self.capture_name_window_pairs
             .iter()
             .map(|(name, _)| name)
             .cloned()
             .collect::<Vec<_>>()
+    }
+
+    fn update_windows(&mut self) {
+        self.capture_name_window_pairs =
+            query_capture_name_window_pairs().expect("supported platform");
     }
 
     fn selected_window_index(&self) -> Option<usize> {
@@ -149,39 +179,18 @@ impl SettingsService for DefaultSettingsService {
             .unwrap_or(self.capture_default_window)
     }
 
-    fn update_windows(&mut self) {
-        self.capture_name_window_pairs =
-            query_capture_name_window_pairs().expect("supported platform");
-    }
-
-    fn update_selected_window(
-        &mut self,
-        input: &mut dyn Input,
-        input_receiver: &mut dyn InputReceiver,
-        capture: &mut dyn Capture,
-        index: Option<usize>,
-    ) {
+    fn update_selected_window(&mut self, index: Option<usize>) {
         self.capture_selected_window_index = index;
-        self.update_capture(capture, true);
-        self.update_inputs(input, input_receiver, capture);
     }
 
-    fn update(
-        &mut self,
-        operation: &mut Operation,
+    fn apply_selected_window(
+        &self,
         input: &mut dyn Input,
-        input_receiver: &mut dyn InputReceiver,
+        input_rx: &mut dyn InputReceiver,
         capture: &mut dyn Capture,
-        new_settings: Settings,
     ) {
-        *operation = operation.update_from_mode(
-            new_settings.cycle_run_stop,
-            new_settings.cycle_run_duration_millis,
-            new_settings.cycle_stop_duration_millis,
-        );
-        *self.settings.borrow_mut() = new_settings;
-        self.update_capture(capture, false);
-        self.update_inputs(input, input_receiver, capture);
+        self.update_capture(capture, true);
+        self.update_inputs(input, input_rx, capture);
     }
 }
 
@@ -257,7 +266,8 @@ mod tests {
             .withf(|mode| *mode == CaptureMode::WindowsGraphicsCapture)
             .once();
 
-        service.update_selected_window(&mut mock_keys, &mut key_receiver, &mut capture, Some(1));
+        service.update_selected_window(Some(1));
+        service.apply_selected_window(&mut mock_keys, &mut key_receiver, &mut capture);
 
         assert_eq!(service.selected_window_index(), Some(1));
         assert_eq!(service.selected_window(), Window::new("Bar"));
@@ -305,13 +315,8 @@ mod tests {
             .return_const(CaptureMode::BitBlt);
         let mut op = Operation::Running;
 
-        service.update(
-            &mut op,
-            &mut mock_keys,
-            &mut key_receiver,
-            &mut capture,
-            new_settings.clone(),
-        );
+        service.update_settings(new_settings.clone());
+        service.apply_settings(&mut op, &mut mock_keys, &mut key_receiver, &mut capture);
 
         let current = service.settings();
 
@@ -348,12 +353,7 @@ mod tests {
             .return_const(CaptureMode::BitBltArea);
         let mut op = Operation::Running;
 
-        service.update(
-            &mut op,
-            &mut mock_keys,
-            &mut key_receiver,
-            &mut capture,
-            new_settings.clone(),
-        );
+        service.update_settings(new_settings.clone());
+        service.apply_settings(&mut op, &mut mock_keys, &mut key_receiver, &mut capture);
     }
 }

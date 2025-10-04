@@ -11,14 +11,14 @@ use opencv::{
     core::{Vector, VectorToVec},
     imgcodecs::imencode_def,
 };
-use platforms::Error;
+use platforms::{Error, input::InputKind};
 use strum::IntoEnumIterator;
 use tokio::sync::broadcast::channel;
 
 #[cfg(debug_assertions)]
 use crate::ecs::Debug;
 use crate::{
-    bridge::Capture,
+    bridge::{Capture, DefaultCapture, DefaultInput, InputMethod},
     buff::{self, Buff, BuffContext, BuffEntity, BuffKind},
     database::{query_seeds, query_settings},
     detect::CachedDetector,
@@ -78,8 +78,13 @@ fn systems_loop() {
     let seeds = query_seeds(); // Fixed, unchanged
     let rng = Rng::new(seeds.seed); // Create one for Context
     let (event_tx, event_rx) = channel::<WorldEvent>(5);
-    let (mut service, input, mut capture) =
-        DefaultService::new(seeds, settings.clone(), event_tx.subscribe());
+
+    let mut service = DefaultService::new(settings.clone(), event_tx.subscribe());
+    let window = service.selected_window();
+    let mut input = DefaultInput::new(InputMethod::Default(window, InputKind::Focused), seeds);
+    let mut capture = DefaultCapture::new(window);
+    service.update_input_and_capture(&mut input, &mut capture);
+
     let mut rotator = DefaultRotator::default();
     let mut navigator = DefaultNavigator::new(event_rx);
     let notification = DiscordNotification::new(settings.clone());
