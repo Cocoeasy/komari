@@ -7,10 +7,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use opencv::{
-    core::{Vector, VectorToVec},
-    imgcodecs::imencode_def,
-};
 use platforms::{Error, input::InputKind};
 use strum::IntoEnumIterator;
 use tokio::sync::broadcast::channel;
@@ -196,7 +192,7 @@ fn systems_loop() {
         resources.input.update(resources.tick);
         resources
             .notification
-            .update(|| to_png(resources.detector.as_ref().map(|detector| detector.mat())));
+            .update(resources.detector.as_ref().map(|detector| detector.mat()));
         service.poll(
             &mut resources,
             &mut world,
@@ -236,13 +232,4 @@ fn loop_with_fps(fps: u32, mut on_tick: impl FnMut()) {
             }
         }
     }
-}
-
-#[inline]
-fn to_png(frame: Option<&OwnedMat>) -> Option<Vec<u8>> {
-    frame.and_then(|image| {
-        let mut bytes = Vector::new();
-        imencode_def(".png", image, &mut bytes).ok()?;
-        Some(bytes.to_vec())
-    })
 }

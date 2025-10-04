@@ -10,6 +10,10 @@ use std::{
 use anyhow::{Error, Ok, bail};
 use bit_vec::BitVec;
 use log::{debug, error};
+use opencv::{
+    core::{Vector, VectorToVec},
+    imgcodecs::imencode_def,
+};
 use reqwest::Url;
 use serenity::all::{CreateAttachment, ExecuteWebhook, Http, Webhook};
 use tokio::{
@@ -17,7 +21,7 @@ use tokio::{
     time::{Instant, sleep},
 };
 
-use crate::Settings;
+use crate::{Settings, mat::OwnedMat};
 
 static TRUE: bool = true;
 static FALSE: bool = false;
@@ -233,7 +237,15 @@ impl DiscordNotification {
         Ok(())
     }
 
-    pub fn update(&self, frame: impl Fn() -> Option<Vec<u8>>) {
+    pub fn update(&self, frame: Option<&OwnedMat>) {
+        #[inline]
+        fn to_png(frame: Option<&OwnedMat>) -> Option<Vec<u8>> {
+            let frame = frame?;
+            let mut bytes = Vector::new();
+            imencode_def(".png", frame, &mut bytes).ok()?;
+            Some(bytes.to_vec())
+        }
+
         let mut scheduled = self.scheduled.lock().unwrap();
         if scheduled.is_empty() {
             return;
@@ -244,7 +256,7 @@ impl DiscordNotification {
             for (item_frame, deadline) in item.frames.iter_mut() {
                 if elapsed_secs <= *deadline {
                     if item_frame.is_none() {
-                        *item_frame = frame();
+                        *item_frame = to_png(frame);
                     }
                     break;
                 }
@@ -287,10 +299,11 @@ async fn post_notification(notification: ScheduledNotification) -> Result<(), Er
 mod test {
     use std::{cell::RefCell, rc::Rc, time::Duration};
 
+    use opencv::core::Mat;
     use tokio::time::{Instant, advance};
 
     use super::{DiscordNotification, NotificationKind, ScheduledNotification};
-    use crate::{Notifications, Settings};
+    use crate::{Notifications, Settings, mat::OwnedMat};
 
     #[tokio::test(start_paused = true)]
     async fn schedule_kind_unique() {
@@ -357,7 +370,7 @@ mod test {
 
         advance(Duration::from_secs(4)).await;
         // Skip frame 1 because deadline passed to frame 2
-        noti.update(|| Some(vec![]));
+        noti.update(Some(&OwnedMat::from(Mat::default())));
         let scheduled_guard = noti.scheduled.lock().unwrap();
         let scheduled = scheduled_guard.first().unwrap();
         assert!(scheduled.frames[0].0.is_none());
@@ -367,7 +380,7 @@ mod test {
 
         // Frame 3
         advance(Duration::from_secs(4)).await;
-        noti.update(|| Some(vec![]));
+        noti.update(Some(&OwnedMat::from(Mat::default())));
         let scheduled = noti.scheduled.lock().unwrap();
         let scheduled = scheduled.first().unwrap();
         assert!(scheduled.frames[0].0.is_none());
