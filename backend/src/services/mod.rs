@@ -16,8 +16,8 @@ use tokio::{
 use crate::{
     ActionKeyDirection, ActionKeyWith, Character, GameState, KeyBinding, LinkKeyBinding, Minimap,
     NavigationPath, RequestHandler, RotateKind, Settings,
-    bot::{BotAction, BotCommandKind},
     bridge::{Capture, DefaultInputReceiver, Input},
+    control::{BotAction, BotCommandKind},
     ecs::{Resources, World, WorldEvent},
     navigator::Navigator,
     notification::NotificationKind,
@@ -26,8 +26,8 @@ use crate::{
     poll_request,
     rotator::Rotator,
     services::{
-        bot::BotService,
         character::{CharacterService, DefaultCharacterService},
+        control::ControlService,
         game::{DefaultGameService, GameEvent, GameService},
         minimap::{DefaultMinimapService, MinimapService},
         navigator::{DefaultNavigatorService, NavigatorService},
@@ -38,8 +38,8 @@ use crate::{
 #[cfg(debug_assertions)]
 use crate::{DebugState, services::debug::DebugService};
 
-mod bot;
 mod character;
+mod control;
 #[cfg(debug_assertions)]
 mod debug;
 mod game;
@@ -58,7 +58,7 @@ pub struct DefaultService {
     rotator: Box<dyn RotatorService>,
     navigator: Box<dyn NavigatorService>,
     settings: Box<dyn SettingsService>,
-    bot: BotService,
+    bot: ControlService,
     #[cfg(debug_assertions)]
     debug: DebugService,
 }
@@ -68,7 +68,7 @@ impl DefaultService {
         let settings_service = DefaultSettingsService::new(settings.clone());
         let window = settings_service.selected_window();
         let input_rx = DefaultInputReceiver::new(window, InputKind::Focused);
-        let mut bot = BotService::default();
+        let mut bot = ControlService::default();
         bot.update(&settings_service.settings());
 
         Self {

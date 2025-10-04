@@ -23,9 +23,9 @@ use tokio::{
 };
 
 mod array;
-mod bot;
 mod bridge;
 mod buff;
+mod control;
 mod database;
 #[cfg(debug_assertions)]
 mod debug;
