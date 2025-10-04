@@ -107,7 +107,7 @@ impl DefaultService {
             game: Box::new(DefaultGameService::new(input_receiver)),
             minimap: Box::new(DefaultMinimapService::default()),
             character: Box::new(DefaultCharacterService::default()),
-            rotator: Box::new(DefaultRotatorService),
+            rotator: Box::new(DefaultRotatorService::default()),
             navigator: Box::new(DefaultNavigatorService),
             settings: Box::new(settings_service),
             bot,
@@ -184,8 +184,6 @@ impl DefaultRequestHandler<'_> {
                         self.service.minimap.minimap(),
                         self.service.character.character(),
                         &self.service.settings.settings(),
-                        self.service.game.actions(),
-                        self.service.game.buffs(),
                     );
                 }
                 GameEvent::NavigationPathsUpdated => self.args.navigator.mark_dirty(true),
@@ -493,7 +491,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         let character = self.service.character.character();
 
         self.service
-            .game
+            .rotator
             .update_actions(minimap, self.service.minimap.preset(), character);
 
         self.args
@@ -505,8 +503,6 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             minimap,
             character,
             &self.service.settings.settings(),
-            self.service.game.actions(),
-            self.service.game.buffs(),
         );
     }
 
@@ -541,21 +537,18 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         let preset = self.service.minimap.preset();
         let settings = self.service.settings.settings();
 
-        self.service.game.update_actions(minimap, preset, character);
-        self.service.game.update_buffs(character);
+        self.service
+            .rotator
+            .update_actions(minimap, preset, character);
+        self.service.rotator.update_buffs(character);
         if let Some(character) = character {
             self.args.world.buffs.iter_mut().for_each(|buff| {
                 buff.context.update_enabled_state(character, &settings);
             });
         }
-        self.service.rotator.update(
-            self.args.rotator,
-            minimap,
-            character,
-            &settings,
-            self.service.game.actions(),
-            self.service.game.buffs(),
-        );
+        self.service
+            .rotator
+            .update(self.args.rotator, minimap, character, &settings);
     }
 
     fn on_redetect_minimap(&mut self) {

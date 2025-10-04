@@ -18,6 +18,7 @@ const COMMON_FAIL_COUNT: u32 = 5;
 const FAMILIAR_FAIL_COUNT: u32 = 2;
 const RUNE_FAIL_COUNT: u32 = 1;
 
+// An entity for buff.
 #[derive(Debug)]
 pub struct BuffEntity {
     pub state: Buff,
@@ -26,7 +27,7 @@ pub struct BuffEntity {
 
 pub type BuffEntities = [BuffEntity; BuffKind::COUNT];
 
-/// Stores persistent state of a buff.
+/// Stores states of a buff.
 #[derive(Debug)]
 pub struct BuffContext {
     /// The kind of buff.
@@ -108,6 +109,7 @@ impl BuffContext {
     }
 }
 
+// The kind of buff.
 #[derive(Clone, Copy, Debug, EnumIter)]
 #[cfg_attr(test, derive(PartialEq))]
 #[repr(usize)]
