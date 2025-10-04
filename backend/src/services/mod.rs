@@ -49,15 +49,6 @@ mod rotator;
 mod settings;
 
 #[derive(Debug)]
-pub struct PollArgs<'a> {
-    pub resources: &'a mut Resources,
-    pub world: &'a mut World,
-    pub rotator: &'a mut dyn Rotator,
-    pub navigator: &'a mut dyn Navigator,
-    pub capture: &'a mut dyn Capture,
-}
-
-#[derive(Debug)]
 pub struct DefaultService {
     event_rx: Receiver<WorldEvent>,
     pending_halt: Option<JoinHandle<()>>,
@@ -105,10 +96,21 @@ impl DefaultService {
     }
 
     #[inline]
-    pub fn poll(&mut self, args: PollArgs<'_>) {
+    pub fn poll(
+        &mut self,
+        resources: &mut Resources,
+        world: &mut World,
+        rotator: &mut dyn Rotator,
+        navigator: &mut dyn Navigator,
+        capture: &mut dyn Capture,
+    ) {
         let mut handler = DefaultRequestHandler {
             service: self,
-            args,
+            resources,
+            world,
+            rotator,
+            navigator,
+            capture,
         };
         // TODO: Maybe handling 1 by 1 on each tick instead of all at once?
         handler.poll_request();
@@ -122,7 +124,11 @@ impl DefaultService {
 #[derive(Debug)]
 struct DefaultRequestHandler<'a> {
     service: &'a mut DefaultService,
-    args: PollArgs<'a>,
+    resources: &'a mut Resources,
+    world: &'a mut World,
+    rotator: &'a mut dyn Rotator,
+    navigator: &'a mut dyn Navigator,
+    capture: &'a mut dyn Capture,
 }
 
 impl DefaultRequestHandler<'_> {
@@ -145,7 +151,7 @@ impl DefaultRequestHandler<'_> {
         for event in events {
             match event {
                 GameEvent::ToggleOperation => {
-                    let kind = if self.args.resources.operation.halting() {
+                    let kind = if self.resources.operation.halting() {
                         RotateKind::Run
                     } else {
                         RotateKind::TemporaryHalt
@@ -159,25 +165,25 @@ impl DefaultRequestHandler<'_> {
                 GameEvent::SettingsUpdated(settings) => {
                     self.service.settings.update_settings(settings);
                     self.service.settings.apply_settings(
-                        &mut self.args.resources.operation,
-                        self.args.resources.input.as_mut(),
+                        &mut self.resources.operation,
+                        self.resources.input.as_mut(),
                         self.service.game.input_receiver_mut(),
-                        self.args.capture,
+                        self.capture,
                     );
                     self.service.bot.update(&self.service.settings.settings());
                     self.service.rotator.apply(
-                        self.args.rotator,
+                        self.rotator,
                         self.service.minimap.minimap(),
                         self.service.character.character(),
                         &self.service.settings.settings(),
                     );
                 }
-                GameEvent::NavigationPathsUpdated => self.args.navigator.mark_dirty(true),
+                GameEvent::NavigationPathsUpdated => self.navigator.mark_dirty(true),
             }
         }
 
         #[cfg(debug_assertions)]
-        self.service.debug.poll(self.args.resources);
+        self.service.debug.poll(self.resources);
     }
 
     fn poll_context_event(&mut self) {
@@ -190,7 +196,7 @@ impl DefaultRequestHandler<'_> {
             .is_some_and(|handle| handle.is_finished())
         {
             self.service.pending_halt = None;
-            if !self.args.navigator.was_last_point_available_or_completed() {
+            if !self.navigator.was_last_point_available_or_completed() {
                 self.update_halt_or_panic(true, true);
             }
         }
@@ -206,14 +212,14 @@ impl DefaultRequestHandler<'_> {
                 self.update_halt_or_panic(true, false);
             }
             WorldEvent::MinimapChanged => {
-                if self.args.resources.operation.halting()
+                if self.resources.operation.halting()
                     | !self.service.settings.settings().stop_on_fail_or_change_map
                 {
                     return;
                 }
 
                 let player_panicking = matches!(
-                    self.args.world.player.state,
+                    self.world.player.state,
                     Player::Panicking(Panicking {
                         to: PanicTo::Channel,
                         ..
@@ -227,7 +233,7 @@ impl DefaultRequestHandler<'_> {
                 }));
             }
             WorldEvent::CaptureFailed => {
-                if self.args.resources.operation.halting() {
+                if self.resources.operation.halting() {
                     return;
                 }
 
@@ -235,7 +241,6 @@ impl DefaultRequestHandler<'_> {
                     self.update_halt_or_panic(true, false);
                 }
                 let _ = self
-                    .args
                     .resources
                     .notification
                     .schedule_notification(NotificationKind::FailOrMapChange);
@@ -247,7 +252,7 @@ impl DefaultRequestHandler<'_> {
         if let Some(command) = self.service.bot.poll() {
             match command.kind {
                 BotCommandKind::Start => {
-                    if !self.args.resources.operation.halting() {
+                    if !self.resources.operation.halting() {
                         let _ = command
                             .sender
                             .send(EditInteractionResponse::new().content("Bot already running."));
@@ -279,7 +284,7 @@ impl DefaultRequestHandler<'_> {
                     self.update_halting(RotateKind::TemporaryHalt);
                 }
                 BotCommandKind::Status => {
-                    let (status, frame) = state_and_frame(self.args.resources, self.args.world);
+                    let (status, frame) = state_and_frame(self.resources, self.world);
                     let attachment =
                         frame.map(|bytes| CreateAttachment::bytes(bytes, "image.webp"));
 
@@ -304,13 +309,13 @@ impl DefaultRequestHandler<'_> {
                         .sender
                         .send(EditInteractionResponse::new().content("Queued a chat action."));
                     let action = PlayerAction::Chat(Chat { content });
-                    self.args.rotator.inject_action(action);
+                    self.rotator.inject_action(action);
                 }
                 BotCommandKind::Action { action, count } => {
                     // Emulate these actions through keys instead to avoid requiring position
                     let player_action = match action {
                         BotAction::Jump => PlayerAction::Key(Key {
-                            key: self.args.world.player.context.config.jump_key.into(),
+                            key: self.world.player.context.config.jump_key.into(),
                             link_key: None,
                             count,
                             position: None,
@@ -323,9 +328,9 @@ impl DefaultRequestHandler<'_> {
                         }),
                         BotAction::DoubleJump => {
                             PlayerAction::Key(Key {
-                                key: self.args.world.player.context.config.jump_key.into(),
+                                key: self.world.player.context.config.jump_key.into(),
                                 link_key: Some(LinkKeyBinding::Before(
-                                    self.args.world.player.context.config.jump_key.into(),
+                                    self.world.player.context.config.jump_key.into(),
                                 )),
                                 count,
                                 position: None,
@@ -352,7 +357,7 @@ impl DefaultRequestHandler<'_> {
                             })
                         }
                     };
-                    self.args.rotator.inject_action(player_action.clone());
+                    self.rotator.inject_action(player_action.clone());
                     let _ = command
                         .sender
                         .send(EditInteractionResponse::new().content(format!(
@@ -366,25 +371,25 @@ impl DefaultRequestHandler<'_> {
 
     fn broadcast_state(&self) {
         self.service.game.broadcast_state(
-            self.args.resources,
-            self.args.world,
+            self.resources,
+            self.world,
             self.service.minimap.minimap(),
         );
     }
 
     fn update_halting(&mut self, kind: RotateKind) {
         let settings = self.service.settings.settings();
-        let operation = self.args.resources.operation;
+        let operation = self.resources.operation;
 
-        self.args.resources.operation = operation.update_from_rotate_kind_and_mode(
+        self.resources.operation = operation.update_from_rotate_kind_and_mode(
             kind,
             settings.cycle_run_stop,
             settings.cycle_run_duration_millis,
             settings.cycle_stop_duration_millis,
         );
         if matches!(kind, RotateKind::Halt | RotateKind::TemporaryHalt) {
-            self.args.rotator.reset_queue();
-            self.args.world.player.context.clear_actions_aborted(true);
+            self.rotator.reset_queue();
+            self.world.player.context.clear_actions_aborted(true);
             if let Some(handle) = self.service.pending_halt.take() {
                 handle.abort();
             }
@@ -392,9 +397,8 @@ impl DefaultRequestHandler<'_> {
     }
 
     fn update_halt_or_panic(&mut self, should_halt: bool, should_panic: bool) {
-        self.args.rotator.reset_queue();
-        self.args
-            .world
+        self.rotator.reset_queue();
+        self.world
             .player
             .context
             .clear_actions_aborted(!should_panic);
@@ -402,11 +406,10 @@ impl DefaultRequestHandler<'_> {
             if let Some(handle) = self.service.pending_halt.take() {
                 handle.abort();
             }
-            self.args.resources.operation = Operation::Halting;
+            self.resources.operation = Operation::Halting;
         }
         if should_panic {
-            self.args
-                .rotator
+            self.rotator
                 .inject_action(PlayerAction::Panic(Panic { to: PanicTo::Town }));
         }
     }
@@ -422,16 +425,14 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_create_minimap(&self, name: String) -> Option<Minimap> {
-        self.service
-            .minimap
-            .create(self.args.world.minimap.state, name)
+        self.service.minimap.create(self.world.minimap.state, name)
     }
 
     fn on_update_minimap(&mut self, preset: Option<String>, minimap: Option<Minimap>) {
         self.service.minimap.update_minimap_preset(minimap, preset);
         self.service.minimap.apply(
-            &mut self.args.world.minimap.context,
-            &mut self.args.world.player.context,
+            &mut self.world.minimap.context,
+            &mut self.world.player.context,
         );
         let minimap = self.service.minimap.minimap();
         let character = self.service.character.character();
@@ -440,12 +441,11 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             .rotator
             .update_actions(minimap, self.service.minimap.preset(), character);
 
-        self.args
-            .navigator
+        self.navigator
             .mark_dirty_with_destination(minimap.and_then(|minimap| minimap.paths_id_index));
 
         self.service.rotator.apply(
-            self.args.rotator,
+            self.rotator,
             minimap,
             character,
             &self.service.settings.settings(),
@@ -455,15 +455,13 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     fn on_create_navigation_path(&self) -> Option<NavigationPath> {
         self.service
             .navigator
-            .create_path(self.args.resources, self.args.world.minimap.state)
+            .create_path(self.resources, self.world.minimap.state)
     }
 
     fn on_recapture_navigation_path(&self, path: NavigationPath) -> NavigationPath {
-        self.service.navigator.recapture_path(
-            self.args.resources,
-            self.args.world.minimap.state,
-            path,
-        )
+        self.service
+            .navigator
+            .recapture_path(self.resources, self.world.minimap.state, path)
     }
 
     fn on_navigation_snapshot_as_grayscale(&self, base64: String) -> String {
@@ -476,7 +474,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         self.service.character.update_character(character);
         self.service
             .character
-            .apply_character(&mut self.args.world.player.context);
+            .apply_character(&mut self.world.player.context);
 
         let character = self.service.character.character();
         let minimap = self.service.minimap.minimap();
@@ -488,18 +486,18 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             .update_actions(minimap, preset, character);
         self.service.rotator.update_buffs(character);
         if let Some(character) = character {
-            self.args.world.buffs.iter_mut().for_each(|buff| {
+            self.world.buffs.iter_mut().for_each(|buff| {
                 buff.context.update_enabled_state(character, &settings);
             });
         }
         self.service
             .rotator
-            .apply(self.args.rotator, minimap, character, &settings);
+            .apply(self.rotator, minimap, character, &settings);
     }
 
     fn on_redetect_minimap(&mut self) {
-        self.service.minimap.redetect(&mut self.args.world.minimap);
-        self.args.navigator.mark_dirty(true);
+        self.service.minimap.redetect(&mut self.world.minimap);
+        self.navigator.mark_dirty(true);
     }
 
     fn on_game_state_receiver(&self) -> Receiver<GameState> {
@@ -525,9 +523,9 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     fn on_select_capture_handle(&mut self, index: Option<usize>) {
         self.service.settings.update_selected_window(index);
         self.service.settings.apply_selected_window(
-            self.args.resources.input.as_mut(),
+            self.resources.input.as_mut(),
             self.service.game.input_receiver_mut(),
-            self.args.capture,
+            self.capture,
         );
     }
 
@@ -540,14 +538,14 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     fn on_auto_save_rune(&self, auto_save: bool) {
         self.service
             .debug
-            .set_auto_save_rune(self.args.resources, auto_save);
+            .set_auto_save_rune(self.resources, auto_save);
     }
 
     #[cfg(debug_assertions)]
     fn on_capture_image(&self, is_grayscale: bool) {
         self.service
             .debug
-            .capture_image(self.args.resources, is_grayscale);
+            .capture_image(self.resources, is_grayscale);
     }
 
     #[cfg(debug_assertions)]
@@ -557,7 +555,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
 
     #[cfg(debug_assertions)]
     fn on_infer_minimap(&self) {
-        self.service.debug.infer_minimap(self.args.resources);
+        self.service.debug.infer_minimap(self.resources);
     }
 
     #[cfg(debug_assertions)]

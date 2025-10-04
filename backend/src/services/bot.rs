@@ -22,7 +22,6 @@ impl Default for BotService {
 }
 
 impl BotService {
-    #[must_use]
     pub fn poll(&mut self) -> Option<BotCommand> {
         self.bot_command_receiver.try_recv().ok()
     }

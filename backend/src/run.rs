@@ -31,7 +31,7 @@ use crate::{
     player::{self, Player, PlayerContext, PlayerEntity},
     rng::Rng,
     rotator::{DefaultRotator, Rotator},
-    services::{DefaultService, PollArgs},
+    services::DefaultService,
     skill::{self, Skill, SkillContext, SkillEntity, SkillKind},
 };
 
@@ -73,6 +73,7 @@ pub fn init() {
         });
     }
 }
+
 fn systems_loop() {
     let settings = Rc::new(RefCell::new(query_settings()));
     let seeds = query_seeds(); // Fixed, unchanged
@@ -196,13 +197,13 @@ fn systems_loop() {
         resources
             .notification
             .update(|| to_png(resources.detector.as_ref().map(|detector| detector.mat())));
-        service.poll(PollArgs {
-            resources: &mut resources,
-            world: &mut world,
-            rotator: &mut rotator,
-            navigator: &mut navigator,
-            capture: &mut capture,
-        });
+        service.poll(
+            &mut resources,
+            &mut world,
+            &mut rotator,
+            &mut navigator,
+            &mut capture,
+        );
     });
 }
 
