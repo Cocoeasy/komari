@@ -124,6 +124,9 @@ pub fn Characters() -> Element {
     rsx! {
         div { class: "flex flex-col pb-15 h-full overflow-y-auto scrollbar",
             SectionKeyBindings { character_view, save_character }
+            SectionFeedPet { character_view, save_character }
+            SectionUsePotion { character_view, save_character }
+            SectionMovement { character_view, save_character }
             SectionBuffs { character_view, save_character }
             SectionFixedActions {
                 action_input_kind,
@@ -290,28 +293,6 @@ fn SectionKeyBindings(
                     },
                     value: character_view().change_channel_key,
                 }
-                KeyBindingConfigurationInput {
-                    label: "Feed pet",
-                    disabled: character_view().id.is_none(),
-                    on_value: move |key_config: Option<KeyBindingConfiguration>| {
-                        save_character(Character {
-                            feed_pet_key: key_config.expect("not optional"),
-                            ..character_view.peek().clone()
-                        });
-                    },
-                    value: character_view().feed_pet_key,
-                }
-                KeyBindingConfigurationInput {
-                    label: "Potion",
-                    disabled: character_view().id.is_none(),
-                    on_value: move |key_config: Option<KeyBindingConfiguration>| {
-                        save_character(Character {
-                            potion_key: key_config.expect("not optional"),
-                            ..character_view.peek().clone()
-                        });
-                    },
-                    value: character_view().potion_key,
-                }
                 div { class: "col-span-full grid-cols-3 grid gap-2 justify-items-stretch",
                     KeyBindingConfigurationInput {
                         label: "Familiar menu",
@@ -346,6 +327,204 @@ fn SectionKeyBindings(
                         },
                         value: character_view().familiar_essence_key,
                     }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn SectionFeedPet(character_view: Memo<Character>, save_character: Callback<Character>) -> Element {
+    rsx! {
+        Section { name: "Feed pet",
+            div { class: "grid grid-cols-3 gap-4",
+                KeyBindingConfigurationInput {
+                    label: "Key",
+                    div_class: "col-span-2",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |key_config: Option<KeyBindingConfiguration>| {
+                        save_character(Character {
+                            feed_pet_key: key_config.expect("not optional"),
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().feed_pet_key,
+                }
+                CharactersCheckbox {
+                    label: "Enabled",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |enabled| {
+                        let character = character_view.peek().clone();
+                        save_character(Character {
+                            feed_pet_key: KeyBindingConfiguration {
+                                enabled,
+                                ..character.feed_pet_key
+                            },
+                            ..character
+                        });
+                    },
+                    value: character_view().feed_pet_key.enabled,
+                }
+                CharactersNumberU32Input {
+                    label: "Count",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |feed_pet_count| {
+                        save_character(Character {
+                            feed_pet_count,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().feed_pet_count,
+                }
+                CharactersMillisInput {
+                    label: "Every",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |feed_pet_millis| {
+                        save_character(Character {
+                            feed_pet_millis,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().feed_pet_millis,
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn SectionUsePotion(
+    character_view: Memo<Character>,
+    save_character: Callback<Character>,
+) -> Element {
+    rsx! {
+        Section { name: "Use potion",
+            div { class: "grid grid-cols-3 gap-4",
+                KeyBindingConfigurationInput {
+                    label: "Key",
+                    div_class: "col-span-2",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |key_config: Option<KeyBindingConfiguration>| {
+                        save_character(Character {
+                            potion_key: key_config.expect("not optional"),
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().potion_key,
+                }
+                CharactersCheckbox {
+                    label: "Enabled",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |enabled| {
+                        let character = character_view.peek().clone();
+                        save_character(Character {
+                            potion_key: KeyBindingConfiguration {
+                                enabled,
+                                ..character.potion_key
+                            },
+                            ..character
+                        });
+                    },
+                    value: character_view().potion_key.enabled,
+                }
+                CharactersSelect::<PotionMode> {
+                    label: "Mode",
+                    disabled: character_view().id.is_none(),
+                    on_select: move |potion_mode| {
+                        save_character(Character {
+                            potion_mode,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    selected: character_view().potion_mode,
+                }
+                match character_view().potion_mode {
+                    PotionMode::EveryMillis(millis) => rsx! {
+                        CharactersMillisInput {
+                            label: "Every",
+                            disabled: character_view().id.is_none(),
+                            on_value: move |millis| {
+                                save_character(Character {
+                                    potion_mode: PotionMode::EveryMillis(millis),
+                                    ..character_view.peek().clone()
+                                });
+                            },
+                            value: millis,
+                        }
+                    },
+                    PotionMode::Percentage(percent) => rsx! {
+                        div { class: "grid grid-cols-2 col-span-2 gap-2",
+                            CharactersPercentageInput {
+                                label: "Below health",
+                                disabled: character_view().id.is_none(),
+                                on_value: move |percent| {
+                                    save_character(Character {
+                                        potion_mode: PotionMode::Percentage(percent),
+                                        ..character_view.peek().clone()
+                                    });
+                                },
+                                value: percent,
+                            }
+                            CharactersMillisInput {
+                                label: "Health update every",
+                                disabled: character_view().id.is_none(),
+                                on_value: move |millis| {
+                                    save_character(Character {
+                                        health_update_millis: millis,
+                                        ..character_view.peek().clone()
+                                    });
+                                },
+                                value: character_view().health_update_millis,
+                            }
+                        }
+                    },
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn SectionMovement(
+    character_view: Memo<Character>,
+    save_character: Callback<Character>,
+) -> Element {
+    rsx! {
+        Section { name: "Movement",
+
+            div { class: "grid grid-cols-3 gap-4",
+                CharactersCheckbox {
+                    label: "Up jump is flight",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |up_jump_is_flight| {
+                        save_character(Character {
+                            up_jump_is_flight,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().up_jump_is_flight,
+                }
+                CharactersCheckbox {
+                    label: "Disable teleport on fall",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |disable_teleport_on_fall| {
+                        save_character(Character {
+                            disable_teleport_on_fall,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().disable_teleport_on_fall,
+                }
+                CharactersCheckbox {
+                    label: "Disable walking",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |disable_adjusting| {
+                        save_character(Character {
+                            disable_adjusting,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().disable_adjusting,
                 }
             }
         }
@@ -693,110 +872,6 @@ fn SectionOthers(character_view: Memo<Character>, save_character: Callback<Chara
     rsx! {
         Section { name: "Others",
             div { class: "grid grid-cols-[auto_auto_128px] gap-4",
-                CharactersNumberU32Input {
-                    label: "Feed pet count",
-                    disabled: character_view().id.is_none(),
-                    on_value: move |feed_pet_count| {
-                        save_character(Character {
-                            feed_pet_count,
-                            ..character_view.peek().clone()
-                        });
-                    },
-                    value: character_view().feed_pet_count,
-                }
-                CharactersMillisInput {
-                    label: "Feed pet every",
-                    disabled: character_view().id.is_none(),
-                    on_value: move |feed_pet_millis| {
-                        save_character(Character {
-                            feed_pet_millis,
-                            ..character_view.peek().clone()
-                        });
-                    },
-                    value: character_view().feed_pet_millis,
-                }
-                CharactersCheckbox {
-                    label: "Feed pet",
-                    disabled: character_view().id.is_none(),
-                    on_value: move |enabled| {
-                        let character = character_view.peek().clone();
-                        save_character(Character {
-                            feed_pet_key: KeyBindingConfiguration {
-                                enabled,
-                                ..character.feed_pet_key
-                            },
-                            ..character
-                        });
-                    },
-                    value: character_view().feed_pet_key.enabled,
-                }
-                CharactersSelect::<PotionMode> {
-                    label: "Potion mode",
-                    disabled: character_view().id.is_none(),
-                    on_select: move |potion_mode| {
-                        save_character(Character {
-                            potion_mode,
-                            ..character_view.peek().clone()
-                        });
-                    },
-                    selected: character_view().potion_mode,
-                }
-                match character_view().potion_mode {
-                    PotionMode::EveryMillis(millis) => rsx! {
-                        CharactersMillisInput {
-                            label: "Use every",
-                            disabled: character_view().id.is_none(),
-                            on_value: move |millis| {
-                                save_character(Character {
-                                    potion_mode: PotionMode::EveryMillis(millis),
-                                    ..character_view.peek().clone()
-                                });
-                            },
-                            value: millis,
-                        }
-                    },
-                    PotionMode::Percentage(percent) => rsx! {
-                        div { class: "grid grid-cols-2 gap-2",
-                            CharactersPercentageInput {
-                                label: "Use below health",
-                                disabled: character_view().id.is_none(),
-                                on_value: move |percent| {
-                                    save_character(Character {
-                                        potion_mode: PotionMode::Percentage(percent),
-                                        ..character_view.peek().clone()
-                                    });
-                                },
-                                value: percent,
-                            }
-                            CharactersMillisInput {
-                                label: "Health update every",
-                                disabled: character_view().id.is_none(),
-                                on_value: move |millis| {
-                                    save_character(Character {
-                                        health_update_millis: millis,
-                                        ..character_view.peek().clone()
-                                    });
-                                },
-                                value: character_view().health_update_millis,
-                            }
-                        }
-                    },
-                }
-                CharactersCheckbox {
-                    label: "Use potion",
-                    disabled: character_view().id.is_none(),
-                    on_value: move |enabled| {
-                        let character = character_view.peek().clone();
-                        save_character(Character {
-                            potion_key: KeyBindingConfiguration {
-                                enabled,
-                                ..character.potion_key
-                            },
-                            ..character
-                        });
-                    },
-                    value: character_view().potion_key.enabled,
-                }
                 CharactersSelect::<Class> {
                     label: "Link key timing class",
                     disabled: character_view().id.is_none(),
@@ -810,39 +885,6 @@ fn SectionOthers(character_view: Memo<Character>, save_character: Callback<Chara
                 }
                 div {}
                 div {}
-                CharactersCheckbox {
-                    label: "Up jump is flight",
-                    disabled: character_view().id.is_none(),
-                    on_value: move |up_jump_is_flight| {
-                        save_character(Character {
-                            up_jump_is_flight,
-                            ..character_view.peek().clone()
-                        });
-                    },
-                    value: character_view().up_jump_is_flight,
-                }
-                CharactersCheckbox {
-                    label: "Disable teleport on fall",
-                    disabled: character_view().id.is_none(),
-                    on_value: move |disable_teleport_on_fall| {
-                        save_character(Character {
-                            disable_teleport_on_fall,
-                            ..character_view.peek().clone()
-                        });
-                    },
-                    value: character_view().disable_teleport_on_fall,
-                }
-                CharactersCheckbox {
-                    label: "Disable walking",
-                    disabled: character_view().id.is_none(),
-                    on_value: move |disable_adjusting| {
-                        save_character(Character {
-                            disable_adjusting,
-                            ..character_view.peek().clone()
-                        });
-                    },
-                    value: character_view().disable_adjusting,
-                }
                 CharactersSelect::<EliteBossBehavior> {
                     label: "Elite boss spawns behavior",
                     disabled: character_view().id.is_none(),
