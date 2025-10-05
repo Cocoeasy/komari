@@ -360,7 +360,7 @@ pub(super) fn update_from_auto_mob_action(
 
     transition_if!(
         player,
-        Player::UseKey(UseKey::from_auto_mob(mob, direction, should_terminate,)),
+        Player::UseKey(UseKey::from_auto_mob(mob, direction, should_terminate)),
         should_check_pathing
             && player
                 .context
@@ -374,6 +374,7 @@ pub(super) fn update_from_auto_mob_action(
         Player::UseKey(UseKey::from_auto_mob(mob, direction, should_terminate)),
         should_terminate,
         {
+            player.context.last_known_direction = ActionKeyDirection::Any;
             release_arrow_keys(resources);
         }
     );

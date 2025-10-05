@@ -425,11 +425,17 @@ fn update_changing_direction(
     };
 
     match next_timeout_lifecycle(timeout, CHANGE_DIRECTION_TIMEOUT) {
-        Lifecycle::Started(timeout) => transition!(use_key, State::ChangingDirection(timeout), {
-            resources.input.send_key_down(key);
-        }),
+        Lifecycle::Started(timeout) => {
+            transition_if!(
+                use_key,
+                State::ChangingDirection(timeout.started(false)),
+                !resources.input.is_key_cleared(key)
+            );
+            transition!(use_key, State::ChangingDirection(timeout), {
+                resources.input.send_key(key);
+            })
+        }
         Lifecycle::Ended => transition!(use_key, State::Precondition, {
-            resources.input.send_key_up(key);
             context.last_known_direction = use_key.direction;
         }),
         Lifecycle::Updated(timeout) => transition!(use_key, State::ChangingDirection(timeout)),
@@ -607,10 +613,12 @@ mod tests {
     #[test]
     fn update_use_key_state_changing_direction() {
         let mut keys = MockInput::new();
-        keys.expect_send_key_down()
-            .withf(|k| matches!(k, KeyKind::Left));
-        keys.expect_send_key_up()
-            .withf(|k| matches!(k, KeyKind::Left));
+        keys.expect_is_key_cleared()
+            .withf(|k| matches!(k, KeyKind::Left))
+            .returning(|_| true);
+        keys.expect_send_key()
+            .withf(|k| matches!(k, KeyKind::Left))
+            .once();
         let resources = Resources::new(Some(keys), None);
         let mut use_key = UseKey {
             key: KeyBinding::A,

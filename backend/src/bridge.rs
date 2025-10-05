@@ -595,6 +595,9 @@ pub trait Input: Debug {
     /// Same as [`Self::send_key_down`] but with the provided `options`.
     fn send_key_down_with_options(&self, kind: KeyKind, options: InputKeyDownOptions);
 
+    /// Whether the key `kind` is cleared.
+    fn is_key_cleared(&self, kind: KeyKind) -> bool;
+
     /// Whether all keys are cleared.
     fn all_keys_cleared(&self) -> bool;
 }
@@ -817,6 +820,10 @@ impl Input for DefaultInput {
 
     fn send_key_down_with_options(&self, kind: KeyKind, options: InputKeyDownOptions) {
         let _ = self.send_key_down_inner(kind, options.repeatable);
+    }
+
+    fn is_key_cleared(&self, kind: KeyKind) -> bool {
+        !self.delay_map.borrow().contains_key(&kind)
     }
 
     #[inline]

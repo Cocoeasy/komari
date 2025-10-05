@@ -135,7 +135,7 @@ impl Moving {
 
     #[inline]
     pub fn timeout_started(mut self, started: bool) -> Moving {
-        self.timeout.started = started;
+        self.timeout = self.timeout.started(started);
         self
     }
 

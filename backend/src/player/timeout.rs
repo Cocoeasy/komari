@@ -50,6 +50,13 @@ pub struct Timeout {
     pub started: bool,
 }
 
+impl Timeout {
+    pub fn started(mut self, started: bool) -> Timeout {
+        self.started = started;
+        self
+    }
+}
+
 /// Gets the next [`Timeout`] lifecycle.
 ///
 /// This is basic building block for contextual states that can
