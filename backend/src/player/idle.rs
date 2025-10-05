@@ -3,7 +3,7 @@ use opencv::core::Point;
 
 use super::{
     AutoMob, Key, Move, Player, PlayerAction,
-    actions::{PingPong, next_action, update_from_ping_pong_action},
+    actions::{next_action, update_from_ping_pong_action},
     double_jump::DoubleJumping,
     familiars_swap::FamiliarsSwapping,
     moving::{Moving, find_intermediate_points},
@@ -105,12 +105,14 @@ fn update_from_action(resources: &Resources, player: &mut PlayerEntity, minimap_
             );
         }
 
-        Some(PlayerAction::Key(Key {
-            position: None,
-            with: ActionKeyWith::DoubleJump,
-            direction,
-            ..
-        })) => {
+        Some(PlayerAction::Key(
+            key @ Key {
+                position: None,
+                with: ActionKeyWith::DoubleJump,
+                direction,
+                ..
+            },
+        )) => {
             let last_pos = context.last_known_pos.unwrap();
             let last_direction = context.last_known_direction;
 
@@ -121,16 +123,18 @@ fn update_from_action(resources: &Resources, player: &mut PlayerEntity, minimap_
                     true,
                     true,
                 )),
-                Player::UseKey(UseKey::from_action(action.unwrap())),
+                Player::UseKey(UseKey::from_key(key)),
                 matches!(direction, ActionKeyDirection::Any) || direction == last_direction
             );
         }
 
-        Some(PlayerAction::Key(Key {
-            position: None,
-            with: ActionKeyWith::Any | ActionKeyWith::Stationary,
-            ..
-        })) => transition!(player, Player::UseKey(UseKey::from_action(action.unwrap()))),
+        Some(PlayerAction::Key(
+            key @ Key {
+                position: None,
+                with: ActionKeyWith::Any | ActionKeyWith::Stationary,
+                ..
+            },
+        )) => transition!(player, Player::UseKey(UseKey::from_key(key))),
 
         Some(PlayerAction::SolveRune) => {
             let idle = match minimap_state {
@@ -174,18 +178,9 @@ fn update_from_action(resources: &Resources, player: &mut PlayerEntity, minimap_
             }
         }
 
-        Some(PlayerAction::PingPong(PingPong {
-            bound, direction, ..
-        })) => {
+        Some(PlayerAction::PingPong(ping_pong)) => {
             let last_pos = context.last_known_pos.unwrap();
-            update_from_ping_pong_action(
-                resources,
-                player,
-                minimap_state,
-                last_pos,
-                bound,
-                direction,
-            )
+            update_from_ping_pong_action(resources, player, minimap_state, ping_pong, last_pos)
         }
 
         Some(PlayerAction::FamiliarsSwap(swapping)) => transition!(

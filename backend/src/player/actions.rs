@@ -304,10 +304,11 @@ pub(super) fn update_from_ping_pong_action(
     resources: &Resources,
     player: &mut PlayerEntity,
     minimap_state: Minimap,
+    ping_pong: PingPong,
     cur_pos: Point,
-    bound: Rect,
-    direction: PingPongDirection,
 ) {
+    let direction = ping_pong.direction;
+    let bound = ping_pong.bound;
     let hit_x_bound_edge = match direction {
         PingPongDirection::Left => cur_pos.x - bound.x <= 0,
         PingPongDirection::Right => cur_pos.x - bound.x - bound.width >= 0,
@@ -336,21 +337,31 @@ pub(super) fn update_from_ping_pong_action(
 ///
 /// This is common logics shared with other contextual states when there is auto mob action.
 #[inline]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn update_from_auto_mob_action(
     resources: &Resources,
     player: &mut PlayerEntity,
     minimap_state: Minimap,
-    action: PlayerAction,
-    is_pathing: bool,
-    cur_pos: Point,
+    mob: AutoMob,
     x_distance: i32,
+    x_direction: i32,
     y_distance: i32,
 ) {
+    let direction = match x_direction {
+        direction if direction > 0 => ActionKeyDirection::Right,
+        direction if direction < 0 => ActionKeyDirection::Left,
+        _ => ActionKeyDirection::Any,
+    };
+    let should_terminate =
+        x_distance <= AUTO_MOB_USE_KEY_X_THRESHOLD && y_distance <= AUTO_MOB_USE_KEY_Y_THRESHOLD;
+    let should_check_pathing = matches!(
+        player.state,
+        Player::DoubleJumping(_) | Player::Adjusting(_)
+    );
+
     transition_if!(
         player,
-        Player::UseKey(UseKey::from_action_pos(action, Some(cur_pos))),
-        is_pathing
+        Player::UseKey(UseKey::from_auto_mob(mob, direction, should_terminate,)),
+        should_check_pathing
             && player
                 .context
                 .auto_mob_pathing_should_use_key(resources, minimap_state),
@@ -360,8 +371,8 @@ pub(super) fn update_from_auto_mob_action(
     );
     transition_if!(
         player,
-        Player::UseKey(UseKey::from_action_pos(action, Some(cur_pos))),
-        x_distance <= AUTO_MOB_USE_KEY_X_THRESHOLD && y_distance <= AUTO_MOB_USE_KEY_Y_THRESHOLD,
+        Player::UseKey(UseKey::from_auto_mob(mob, direction, should_terminate)),
+        should_terminate,
         {
             release_arrow_keys(resources);
         }

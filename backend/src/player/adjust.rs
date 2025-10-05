@@ -29,7 +29,7 @@ pub const ADJUSTING_SHORT_THRESHOLD: i32 = 1;
 /// Minimum x distance from the destination required to walk.
 pub const ADJUSTING_MEDIUM_THRESHOLD: i32 = 3;
 
-const ADJUSTING_SHORT_TIMEOUT: u32 = MOVE_TIMEOUT + 1;
+const ADJUSTING_SHORT_TIMEOUT: u32 = MOVE_TIMEOUT * 2;
 
 /// Minimium y distance required to perform a fall and then walk.
 const FALLING_THRESHOLD: i32 = 8;
@@ -148,6 +148,7 @@ pub fn update_adjusting_state(
                         context.last_known_direction = dir;
                     }
                     (false, true, Some((down_key, up_key, dir))) => {
+                        println!("{:?}", moving.pos);
                         adjusting.update_adjusting(resources, up_key, down_key);
                         context.last_known_direction = dir;
                     }
@@ -185,16 +186,17 @@ fn update_from_action(
 
     let cur_pos = moving.pos;
     let context = &player.context;
-    let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
+    let (x_distance, x_direction) = moving.x_distance_direction_from(false, cur_pos);
     let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
-    let action = next_action(context);
 
-    match action {
-        Some(PlayerAction::Key(Key {
-            with: ActionKeyWith::DoubleJump,
-            direction,
-            ..
-        })) => {
+    match next_action(context) {
+        Some(PlayerAction::Key(
+            key @ Key {
+                with: ActionKeyWith::DoubleJump,
+                direction,
+                ..
+            },
+        )) => {
             transition_if!(!moving.completed || y_distance > 0);
             transition_if!(
                 player,
@@ -203,27 +205,28 @@ fn update_from_action(
                     true,
                     false,
                 )),
-                Player::UseKey(UseKey::from_action(action.unwrap())),
+                Player::UseKey(UseKey::from_key(key)),
                 matches!(direction, ActionKeyDirection::Any)
                     || direction == context.last_known_direction
             );
         }
-        Some(PlayerAction::Key(Key {
-            with: ActionKeyWith::Any,
-            ..
-        })) => transition_if!(
+        Some(PlayerAction::Key(
+            key @ Key {
+                with: ActionKeyWith::Any,
+                ..
+            },
+        )) => transition_if!(
             player,
-            Player::UseKey(UseKey::from_action(action.unwrap())),
+            Player::UseKey(UseKey::from_key(key)),
             moving.completed && y_distance <= USE_KEY_Y_THRESHOLD
         ),
-        Some(PlayerAction::AutoMob(_)) => update_from_auto_mob_action(
+        Some(PlayerAction::AutoMob(mob)) => update_from_auto_mob_action(
             resources,
             player,
             minimap_state,
-            action.unwrap(),
-            true,
-            cur_pos,
+            mob,
             x_distance,
+            x_direction,
             y_distance,
         ),
         None

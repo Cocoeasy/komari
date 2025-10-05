@@ -148,9 +148,8 @@ fn update_falling(
     let cur_pos = moving.pos;
     let (y_distance, y_direction) = moving.y_distance_direction_from(true, cur_pos);
     let has_teleport_key = player.context.config.teleport_key.is_some();
-    let action = next_action(&player.context);
-    match action {
-        Some(PlayerAction::AutoMob(_)) => {
+    match next_action(&player.context) {
+        Some(PlayerAction::AutoMob(mob)) => {
             // Ignore `timeout_on_complete` for auto-mobbing intermediate destination
             transition_to_moving_if!(
                 player,
@@ -162,26 +161,27 @@ fn update_falling(
             );
             transition_if!(has_teleport_key && !moving.completed);
 
-            let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
+            let (x_distance, x_direction) = moving.x_distance_direction_from(false, cur_pos);
             let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
             update_from_auto_mob_action(
                 resources,
                 player,
                 minimap_state,
-                action.expect("must be some"),
-                false,
-                cur_pos,
+                mob,
                 x_distance,
+                x_direction,
                 y_distance,
             )
         }
-        Some(PlayerAction::Key(Key {
-            with: ActionKeyWith::Any,
-            ..
-        })) => {
+        Some(PlayerAction::Key(
+            key @ Key {
+                with: ActionKeyWith::Any,
+                ..
+            },
+        )) => {
             transition_if!(
                 player,
-                Player::UseKey(UseKey::from_action(action.unwrap())),
+                Player::UseKey(UseKey::from_key(key)),
                 !has_teleport_key && moving.completed && y_distance < FALLING_TO_USE_KEY_THRESHOLD
             )
         }

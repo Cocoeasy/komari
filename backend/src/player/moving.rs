@@ -434,25 +434,29 @@ fn update_from_action(player: &mut PlayerEntity, moving: Moving) {
             transition_from_action!(player, Player::Idle);
         }
 
-        Some(PlayerAction::Key(Key {
-            with: ActionKeyWith::DoubleJump,
-            direction,
-            ..
-        })) => transition_if!(
+        Some(PlayerAction::Key(
+            key @ Key {
+                with: ActionKeyWith::DoubleJump,
+                direction,
+                ..
+            },
+        )) => transition_if!(
             player,
             Player::DoubleJumping(DoubleJumping::new(moving, true, false)),
-            Player::UseKey(UseKey::from_action(action.unwrap())),
+            Player::UseKey(UseKey::from_key(key)),
             matches!(direction, ActionKeyDirection::Any) || direction == last_direction
         ),
 
-        Some(PlayerAction::Key(Key {
-            with: ActionKeyWith::Any | ActionKeyWith::Stationary,
-            ..
-        })) => transition!(player, Player::UseKey(UseKey::from_action(action.unwrap()))),
+        Some(PlayerAction::Key(
+            key @ Key {
+                with: ActionKeyWith::Any | ActionKeyWith::Stationary,
+                ..
+            },
+        )) => transition!(player, Player::UseKey(UseKey::from_key(key))),
 
-        Some(PlayerAction::AutoMob(_)) => transition!(
+        Some(PlayerAction::AutoMob(mob)) => transition!(
             player,
-            Player::UseKey(UseKey::from_action_pos(action.unwrap(), Some(moving.pos)))
+            Player::UseKey(UseKey::from_auto_mob(mob, ActionKeyDirection::Any, true))
         ),
 
         Some(PlayerAction::SolveRune) => {

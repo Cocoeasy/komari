@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use opencv::core::{Point, Rect};
+use opencv::core::Point;
 
 use super::{
     Key, PingPongDirection, Player, PlayerAction,
@@ -288,43 +288,39 @@ fn update_from_action(
     forced: bool,
 ) {
     let cur_pos = moving.pos;
-    let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
+    let (x_distance, x_direction) = moving.x_distance_direction_from(false, cur_pos);
     let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
-    let action = next_action(&player.context);
     let double_jumped_or_flying = player.context.velocity.0 > X_VELOCITY_THRESHOLD;
 
-    match action {
-        Some(PlayerAction::PingPong(PingPong {
-            bound, direction, ..
-        })) => update_from_ping_pong_action(
+    match next_action(&player.context) {
+        Some(PlayerAction::PingPong(ping_pong)) => update_from_ping_pong_action(
             resources,
             player,
-            action.unwrap(),
+            ping_pong,
             cur_pos,
-            bound,
-            direction,
             double_jumped_or_flying,
         ),
-        Some(PlayerAction::AutoMob(_)) => update_from_auto_mob_action(
+        Some(PlayerAction::AutoMob(mob)) => update_from_auto_mob_action(
             resources,
             player,
             minimap_state,
-            action.unwrap(),
-            true,
-            moving.pos,
+            mob,
             x_distance,
+            x_direction,
             y_distance,
         ),
-        Some(PlayerAction::Key(Key {
-            with: ActionKeyWith::DoubleJump | ActionKeyWith::Any,
-            ..
-        })) => {
+        Some(PlayerAction::Key(
+            key @ Key {
+                with: ActionKeyWith::DoubleJump | ActionKeyWith::Any,
+                ..
+            },
+        )) => {
             transition_if!(!moving.completed);
             // Ignore proximity check when it is forced to double jumped as this indicates the
             // player is already near the destination.
             transition_if!(
                 player,
-                Player::UseKey(UseKey::from_action(action.unwrap())),
+                Player::UseKey(UseKey::from_key(key)),
                 forced
                     || (!moving.exact
                         && x_distance <= USE_KEY_X_THRESHOLD
@@ -355,13 +351,12 @@ fn update_from_action(
 fn update_from_ping_pong_action(
     resources: &Resources,
     player: &mut PlayerEntity,
-    action: PlayerAction,
+    ping_pong: PingPong,
     cur_pos: Point,
-    bound: Rect,
-    direction: PingPongDirection,
     double_jumped: bool,
 ) {
-    let hit_x_bound_edge = match direction {
+    let bound = ping_pong.bound;
+    let hit_x_bound_edge = match ping_pong.direction {
         PingPongDirection::Left => cur_pos.x - bound.x <= 0,
         PingPongDirection::Right => cur_pos.x - bound.x - bound.width >= 0,
     };
@@ -412,7 +407,7 @@ fn update_from_ping_pong_action(
         },
         cur_pos.y > bound_y_max || should_downward
     );
-    transition!(player, Player::UseKey(UseKey::from_action(action)));
+    transition!(player, Player::UseKey(UseKey::from_ping_pong(ping_pong)));
 }
 
 /// Gets the mage teleport direction when the player is already at destination.
@@ -614,28 +609,22 @@ mod tests {
     fn update_from_ping_pong_action_hits_left_bound_goes_idle() {
         let cur_pos = Point::new(10, 100);
         let bound = Rect::new(20, 90, 40, 20);
-        let action = PlayerAction::PingPong(PingPong {
+        let ping_pong = PingPong {
             bound,
             direction: PingPongDirection::Left,
             ..Default::default()
-        });
+        };
         let mut player = make_player_with_state(Player::DoubleJumping(DoubleJumping::new(
             Moving::new(cur_pos, Point::new(30, 100), false, None),
             false,
             false,
         )));
-        player.context.set_normal_action(None, action.clone());
+        player
+            .context
+            .set_normal_action(None, PlayerAction::PingPong(ping_pong));
         let resources = Resources::new(None, None);
 
-        update_from_ping_pong_action(
-            &resources,
-            &mut player,
-            action,
-            cur_pos,
-            bound,
-            PingPongDirection::Left,
-            true,
-        );
+        update_from_ping_pong_action(&resources, &mut player, ping_pong, cur_pos, true);
 
         assert_matches!(player.state, Player::Idle);
     }
@@ -644,27 +633,27 @@ mod tests {
     fn update_from_ping_pong_action_before_double_jump_no_transition() {
         let cur_pos = Point::new(30, 100);
         let bound = Rect::new(20, 90, 40, 20);
-        let action = PlayerAction::PingPong(PingPong {
+        let ping_pong = PingPong {
             bound,
             direction: PingPongDirection::Right,
             ..Default::default()
-        });
+        };
         let mut player = make_player_with_state(Player::DoubleJumping(DoubleJumping::new(
             Moving::new(cur_pos, Point::new(40, 100), false, None),
             false,
             false,
         )));
-        player.context.set_normal_action(None, action.clone());
+        player
+            .context
+            .set_normal_action(None, PlayerAction::PingPong(ping_pong));
         player.context.config.grappling_key = Some(KeyKind::A);
         let resources = Resources::new(None, None);
 
         update_from_ping_pong_action(
             &resources,
             &mut player,
-            action,
+            ping_pong,
             cur_pos,
-            bound,
-            PingPongDirection::Right,
             false, // hasn't jumped yet
         );
 
@@ -676,30 +665,24 @@ mod tests {
     fn update_from_ping_pong_action_transition_to_upjumping_or_grappling() {
         let cur_pos = Point::new(30, 79);
         let bound = Rect::new(20, 80, 40, 20);
-        let action = PlayerAction::PingPong(PingPong {
+        let ping_pong = PingPong {
             bound,
             direction: PingPongDirection::Right,
             ..Default::default()
-        });
+        };
         let mut player = make_player_with_state(Player::DoubleJumping(DoubleJumping::new(
             Moving::new(cur_pos, Point::new(40, 79), false, None),
             false,
             false,
         )));
-        player.context.set_normal_action(None, action.clone());
+        player
+            .context
+            .set_normal_action(None, PlayerAction::PingPong(ping_pong));
         let mut keys = MockInput::new();
         keys.expect_send_key_up();
         let resources = Resources::new(Some(keys), None);
 
-        update_from_ping_pong_action(
-            &resources,
-            &mut player,
-            action.clone(),
-            cur_pos,
-            bound,
-            PingPongDirection::Right,
-            true,
-        );
+        update_from_ping_pong_action(&resources, &mut player, ping_pong, cur_pos, true);
 
         assert_matches!(player.state, Player::UpJumping(_) | Player::Grappling(_));
     }
@@ -708,31 +691,25 @@ mod tests {
     fn update_from_ping_pong_action_transition_to_falling() {
         let cur_pos = Point::new(30, 101);
         let bound = Rect::new(20, 80, 40, 20);
-        let action = PlayerAction::PingPong(PingPong {
+        let ping_pong = PingPong {
             bound,
             direction: PingPongDirection::Right,
             ..Default::default()
-        });
+        };
 
         let mut player = make_player_with_state(Player::DoubleJumping(DoubleJumping::new(
             Moving::new(cur_pos, Point::new(40, 101), false, None),
             false,
             false,
         )));
-        player.context.set_normal_action(None, action.clone());
+        player
+            .context
+            .set_normal_action(None, PlayerAction::PingPong(ping_pong));
         let mut keys = MockInput::new();
         keys.expect_send_key_up();
         let resources = Resources::new(Some(keys), None);
 
-        update_from_ping_pong_action(
-            &resources,
-            &mut player,
-            action,
-            cur_pos,
-            bound,
-            PingPongDirection::Right,
-            true,
-        );
+        update_from_ping_pong_action(&resources, &mut player, ping_pong, cur_pos, true);
 
         assert_matches!(player.state, Player::Falling { .. });
     }

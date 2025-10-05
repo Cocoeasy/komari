@@ -22,6 +22,8 @@ use crate::{
     task::{Task, Update, update_detection_task},
 };
 
+const STATIONARY_TIMEOUT: u32 = MOVE_TIMEOUT + 1;
+
 /// The maximum number of times rune solving can fail before transition to
 /// [`Player::CashShopThenExit`].
 const MAX_RUNE_FAILED_COUNT: u32 = 8;
@@ -1145,7 +1147,7 @@ impl PlayerContext {
         self.update_velocity(pos, resources.tick);
 
         let (is_stationary, is_stationary_timeout) =
-            match next_timeout_lifecycle(self.is_stationary_timeout, MOVE_TIMEOUT) {
+            match next_timeout_lifecycle(self.is_stationary_timeout, STATIONARY_TIMEOUT) {
                 Lifecycle::Started(timeout) => (false, timeout),
                 Lifecycle::Ended => (true, self.is_stationary_timeout),
                 Lifecycle::Updated(timeout) => (false, timeout),

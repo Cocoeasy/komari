@@ -1,5 +1,5 @@
 use super::{
-    PingPong, Player, PlayerAction,
+    Player, PlayerAction,
     actions::{update_from_auto_mob_action, update_from_ping_pong_action},
     state::LastMovement,
     timeout::{MovingLifecycle, next_moving_lifecycle_with_axis},
@@ -79,33 +79,30 @@ pub fn update_grappling_state(
             // Sets initial next state first
             player.state = Player::Grappling(moving);
 
-            let action = next_action(&player.context);
-            match action {
-                Some(PlayerAction::AutoMob(_)) => {
+            match next_action(&player.context) {
+                Some(PlayerAction::AutoMob(mob)) => {
                     transition_if!(!moving.completed);
                     transition_to_moving_if!(player, moving, moving.is_destination_intermediate());
                     transition_if!(
                         player.context.config.teleport_key.is_some() && !moving.completed
                     );
 
-                    let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
+                    let (x_distance, x_direction) =
+                        moving.x_distance_direction_from(false, cur_pos);
                     let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
                     update_from_auto_mob_action(
                         resources,
                         player,
                         minimap_state,
-                        action.expect("must be some"),
-                        false,
-                        cur_pos,
+                        mob,
                         x_distance,
+                        x_direction,
                         y_distance,
                     )
                 }
-                Some(PlayerAction::PingPong(PingPong {
-                    bound, direction, ..
-                })) => {
+                Some(PlayerAction::PingPong(ping_pong)) => {
                     transition_if!(
-                        cur_pos.y < bound.y
+                        cur_pos.y < ping_pong.bound.y
                             || !resources.rng.random_perlin_bool(
                                 cur_pos.x,
                                 cur_pos.y,
@@ -117,9 +114,8 @@ pub fn update_grappling_state(
                         resources,
                         player,
                         minimap_state,
+                        ping_pong,
                         cur_pos,
-                        bound,
-                        direction,
                     );
                 }
                 None

@@ -1,5 +1,5 @@
 use super::{
-    Key, PingPong, Player, PlayerContext,
+    Key, Player, PlayerContext,
     actions::update_from_ping_pong_action,
     moving::Moving,
     timeout::{MovingLifecycle, next_moving_lifecycle_with_axis},
@@ -206,9 +206,8 @@ pub fn update_up_jumping_state(
 
             // Sets initial next state first
             player.state = Player::UpJumping(up_jumping.moving(moving));
-            let action = next_action(&player.context);
-            match action {
-                Some(PlayerAction::AutoMob(_)) => {
+            match next_action(&player.context) {
+                Some(PlayerAction::AutoMob(mob)) => {
                     transition_if!(
                         player,
                         Player::Moving(moving.dest, moving.exact, moving.intermediates),
@@ -221,30 +220,30 @@ pub fn update_up_jumping_state(
                     );
                     transition_if!(up_jumping.auto_mob_wait_completion && !moving.completed);
 
-                    let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
+                    let (x_distance, x_direction) =
+                        moving.x_distance_direction_from(false, cur_pos);
                     let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
                     update_from_auto_mob_action(
                         resources,
                         player,
                         minimap_state,
-                        action.unwrap(),
-                        false,
-                        cur_pos,
+                        mob,
                         x_distance,
+                        x_direction,
                         y_distance,
                     )
                 }
-                Some(PlayerAction::Key(Key {
-                    with: ActionKeyWith::Any,
-                    ..
-                })) => transition_if!(
+                Some(PlayerAction::Key(
+                    key @ Key {
+                        with: ActionKeyWith::Any,
+                        ..
+                    },
+                )) => transition_if!(
                     player,
-                    Player::UseKey(UseKey::from_action(action.unwrap())),
+                    Player::UseKey(UseKey::from_key(key)),
                     moving.completed && y_direction <= 0
                 ),
-                Some(PlayerAction::PingPong(PingPong {
-                    bound, direction, ..
-                })) => {
+                Some(PlayerAction::PingPong(ping_pong)) => {
                     transition_if!(
                         !moving.completed
                             || !resources.rng.random_perlin_bool(
@@ -258,9 +257,8 @@ pub fn update_up_jumping_state(
                         resources,
                         player,
                         minimap_state,
+                        ping_pong,
                         cur_pos,
-                        bound,
-                        direction,
                     );
                 }
                 None

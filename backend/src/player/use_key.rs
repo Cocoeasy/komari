@@ -1,6 +1,4 @@
-use std::{assert_matches::assert_matches, cmp::Ordering};
-
-use opencv::core::Point;
+use std::assert_matches::assert_matches;
 
 use super::{
     AutoMob, PingPongDirection, PlayerContext, Timeout,
@@ -13,10 +11,7 @@ use crate::{
     bridge::KeyKind,
     ecs::Resources,
     minimap::Minimap,
-    player::{
-        AUTO_MOB_USE_KEY_X_THRESHOLD, AUTO_MOB_USE_KEY_Y_THRESHOLD, LastMovement, MOVE_TIMEOUT,
-        Moving, Player, PlayerEntity, next_action,
-    },
+    player::{LastMovement, MOVE_TIMEOUT, Moving, Player, PlayerEntity, next_action},
     transition, transition_from_action, transition_if,
 };
 
@@ -77,104 +72,89 @@ pub struct UseKey {
 }
 
 impl UseKey {
-    #[inline]
-    pub fn from_action(action: PlayerAction) -> Self {
-        UseKey::from_action_pos(action, None)
+    pub fn from_key(key: Key) -> Self {
+        let Key {
+            key,
+            link_key,
+            count,
+            direction,
+            with,
+            wait_before_use_ticks,
+            wait_before_use_ticks_random_range,
+            wait_after_use_ticks,
+            wait_after_use_ticks_random_range,
+            ..
+        } = key;
+        let wait_before =
+            random_wait_ticks(wait_before_use_ticks, wait_before_use_ticks_random_range);
+        let wait_after = random_wait_ticks(wait_after_use_ticks, wait_after_use_ticks_random_range);
+
+        Self {
+            key,
+            link_key,
+            count,
+            current_count: 0,
+            direction,
+            with,
+            wait_before_use_ticks: wait_before,
+            wait_after_use_ticks: wait_after,
+            pending_transition: PendingTransition::None,
+            action_info: None,
+            state: State::Precondition,
+        }
     }
 
-    pub fn from_action_pos(action: PlayerAction, pos: Option<Point>) -> Self {
-        match action {
-            PlayerAction::Key(Key {
-                key,
-                link_key,
-                count,
-                direction,
-                with,
-                wait_before_use_ticks,
-                wait_before_use_ticks_random_range,
-                wait_after_use_ticks,
-                wait_after_use_ticks_random_range,
-                ..
-            }) => {
-                let wait_before =
-                    random_wait_ticks(wait_before_use_ticks, wait_before_use_ticks_random_range);
-                let wait_after =
-                    random_wait_ticks(wait_after_use_ticks, wait_after_use_ticks_random_range);
+    pub fn from_auto_mob(
+        mob: AutoMob,
+        direction: ActionKeyDirection,
+        should_terminate: bool,
+    ) -> Self {
+        let wait_before =
+            random_wait_ticks(mob.wait_before_ticks, mob.wait_before_ticks_random_range);
+        let wait_after = random_wait_ticks(mob.wait_after_ticks, mob.wait_after_ticks_random_range);
 
-                Self {
-                    key,
-                    link_key,
-                    count,
-                    current_count: 0,
-                    direction,
-                    with,
-                    wait_before_use_ticks: wait_before,
-                    wait_after_use_ticks: wait_after,
-                    pending_transition: PendingTransition::None,
-                    action_info: None,
-                    state: State::Precondition,
-                }
-            }
-            PlayerAction::AutoMob(mob) => {
-                let wait_before =
-                    random_wait_ticks(mob.wait_before_ticks, mob.wait_before_ticks_random_range);
-                let wait_after =
-                    random_wait_ticks(mob.wait_after_ticks, mob.wait_after_ticks_random_range);
-                let pos = pos.expect("has position");
-                let direction = match pos.x.cmp(&mob.position.x) {
-                    Ordering::Less => ActionKeyDirection::Right,
-                    Ordering::Equal => ActionKeyDirection::Any,
-                    Ordering::Greater => ActionKeyDirection::Left,
-                };
-                let x_distance = (pos.x - mob.position.x).abs();
-                let y_distance = (pos.y - mob.position.y).abs();
-                let should_terminate = x_distance <= AUTO_MOB_USE_KEY_X_THRESHOLD
-                    && y_distance <= AUTO_MOB_USE_KEY_Y_THRESHOLD;
+        Self {
+            key: mob.key,
+            link_key: mob.link_key,
+            count: mob.count,
+            current_count: 0,
+            direction,
+            with: mob.with,
+            wait_before_use_ticks: wait_before,
+            wait_after_use_ticks: wait_after,
+            pending_transition: PendingTransition::None,
+            action_info: Some(ActionInfo::AutoMobbing { should_terminate }),
+            state: State::Precondition,
+        }
+    }
 
-                Self {
-                    key: mob.key,
-                    link_key: mob.link_key,
-                    count: mob.count,
-                    current_count: 0,
-                    direction,
-                    with: mob.with,
-                    wait_before_use_ticks: wait_before,
-                    wait_after_use_ticks: wait_after,
-                    pending_transition: PendingTransition::None,
-                    action_info: Some(ActionInfo::AutoMobbing { should_terminate }),
-                    state: State::Precondition,
-                }
-            }
-            PlayerAction::PingPong(ping_pong) => {
-                let wait_before = random_wait_ticks(
-                    ping_pong.wait_before_ticks,
-                    ping_pong.wait_before_ticks_random_range,
-                );
-                let wait_after = random_wait_ticks(
-                    ping_pong.wait_after_ticks,
-                    ping_pong.wait_after_ticks_random_range,
-                );
-                let direction = if matches!(ping_pong.direction, PingPongDirection::Left) {
-                    ActionKeyDirection::Left
-                } else {
-                    ActionKeyDirection::Right
-                };
+    pub fn from_ping_pong(ping_pong: PingPong) -> Self {
+        let wait_before = random_wait_ticks(
+            ping_pong.wait_before_ticks,
+            ping_pong.wait_before_ticks_random_range,
+        );
+        let wait_after = random_wait_ticks(
+            ping_pong.wait_after_ticks,
+            ping_pong.wait_after_ticks_random_range,
+        );
+        let direction = if matches!(ping_pong.direction, PingPongDirection::Left) {
+            ActionKeyDirection::Left
+        } else {
+            ActionKeyDirection::Right
+        };
 
-                Self {
-                    key: ping_pong.key,
-                    link_key: ping_pong.link_key,
-                    count: ping_pong.count,
-                    current_count: 0,
-                    direction,
-                    with: ping_pong.with,
-                    wait_before_use_ticks: wait_before,
-                    wait_after_use_ticks: wait_after,
-                    pending_transition: PendingTransition::None,
-                    action_info: None,
-                    state: State::Precondition,
-                }
-            }
-            _ => unreachable!(),
+        Self {
+            key: ping_pong.key,
+            link_key: ping_pong.link_key,
+            count: ping_pong.count,
+            current_count: 0,
+            direction,
+            with: ping_pong.with,
+            wait_before_use_ticks: wait_before,
+            wait_after_use_ticks: wait_after,
+            pending_transition: PendingTransition::None,
+            action_info: None,
+            state: State::Precondition,
         }
     }
 }
@@ -286,9 +266,7 @@ pub fn update_use_key_state(
             transition_from_action!(player, player_next_state);
         }
 
-        Some(PlayerAction::PingPong(PingPong {
-            bound, direction, ..
-        })) => {
+        Some(PlayerAction::PingPong(ping_pong)) => {
             transition_if!(player, player_next_state, !is_terminal);
 
             player.context.clear_unstucking(true);
@@ -296,9 +274,8 @@ pub fn update_use_key_state(
                 resources,
                 player,
                 minimap_state,
+                ping_pong,
                 player.context.last_known_pos.expect("in positional state"),
-                bound,
-                direction,
             )
         }
 
