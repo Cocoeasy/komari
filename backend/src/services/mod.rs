@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
+use dyn_clone::clone_box;
 use opencv::{
     core::{ToInputArray, Vector},
     imgcodecs::imencode_def,
@@ -9,7 +10,7 @@ use serenity::all::{CreateAttachment, EditInteractionResponse};
 use strum::EnumMessage;
 use tokio::{
     sync::broadcast::Receiver,
-    task::{JoinHandle, spawn},
+    task::{JoinHandle, spawn, spawn_blocking},
     time::sleep,
 };
 
@@ -284,16 +285,20 @@ impl DefaultRequestHandler<'_> {
                     self.update_halting(RotateKind::TemporaryHalt);
                 }
                 BotCommandKind::Status => {
-                    let (status, frame) = state_and_frame(self.resources, self.world);
-                    let attachment =
-                        frame.map(|bytes| CreateAttachment::bytes(bytes, "image.webp"));
+                    let provider = state_and_frame_provider(self.resources, self.world);
 
-                    let mut builder = EditInteractionResponse::new().content(status);
-                    if let Some(attachment) = attachment {
-                        builder = builder.new_attachment(attachment);
-                    }
+                    spawn_blocking(move || {
+                        let (status, frame) = provider();
+                        let attachment =
+                            frame.map(|bytes| CreateAttachment::bytes(bytes, "image.webp"));
 
-                    let _ = command.sender.send(builder);
+                        let mut builder = EditInteractionResponse::new().content(status);
+                        if let Some(attachment) = attachment {
+                            builder = builder.new_attachment(attachment);
+                        }
+
+                        let _ = command.sender.send(builder);
+                    });
                 }
                 BotCommandKind::Chat { content } => {
                     if content.chars().count() >= ChattingContent::MAX_LENGTH {
@@ -569,28 +574,33 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 }
 
-fn state_and_frame(resources: &Resources, world: &World) -> (String, Option<Vec<u8>>) {
-    let frame = resources
+fn state_and_frame_provider(
+    resources: &Resources,
+    world: &World,
+) -> impl FnOnce() -> (String, Option<Vec<u8>>) + Send + 'static {
+    #[inline]
+    fn frame_from(mat: &impl ToInputArray) -> Option<Vec<u8>> {
+        let mut vector = Vector::new();
+        imencode_def(".webp", mat, &mut vector).ok()?;
+        Some(Vec::from_iter(vector))
+    }
+
+    let detector = resources
         .detector
         .as_ref()
-        .and_then(|detector| frame_from(detector.mat()));
-
+        .map(|detector| clone_box(detector.as_ref()));
     let state = world.player.state.to_string();
     let operation = resources.operation.to_string();
-    let info = [
-        format!("- State: ``{state}``"),
-        format!("- Operation: ``{operation}``"),
-    ]
-    .join("\n");
 
-    (info, frame)
-}
-
-#[inline]
-fn frame_from(mat: &impl ToInputArray) -> Option<Vec<u8>> {
-    let mut vector = Vector::new();
-    imencode_def(".webp", mat, &mut vector).ok()?;
-    Some(Vec::from_iter(vector))
+    move || {
+        let frame = detector.and_then(|detector| frame_from(detector.mat()));
+        let info = [
+            format!("- State: ``{state}``"),
+            format!("- Operation: ``{operation}``"),
+        ]
+        .join("\n");
+        (info, frame)
+    }
 }
 
 // #[cfg(test)]
