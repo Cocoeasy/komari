@@ -29,7 +29,7 @@ pub const ADJUSTING_SHORT_THRESHOLD: i32 = 1;
 /// Minimum x distance from the destination required to walk.
 pub const ADJUSTING_MEDIUM_THRESHOLD: i32 = 3;
 
-const ADJUSTING_SHORT_TIMEOUT: u32 = MOVE_TIMEOUT * 2;
+const ADJUSTING_SHORT_TIMEOUT: u32 = MOVE_TIMEOUT + 3;
 
 /// Minimium y distance required to perform a fall and then walk.
 const FALLING_THRESHOLD: i32 = 8;
@@ -52,12 +52,14 @@ impl Adjusting {
         Adjusting { moving, ..self }
     }
 
-    fn update_adjusting(&mut self, resources: &Resources, up_key: KeyKind, down_key: KeyKind) {
+    fn update_adjusting(&mut self, resources: &Resources, keys: Option<(KeyKind, KeyKind)>) {
         self.adjust_timeout =
             match next_timeout_lifecycle(self.adjust_timeout, ADJUSTING_SHORT_TIMEOUT) {
                 Lifecycle::Started(timeout) => {
-                    resources.input.send_key_up(up_key);
-                    resources.input.send_key(down_key);
+                    if let Some((up_key, down_key)) = keys {
+                        resources.input.send_key_up(up_key);
+                        resources.input.send_key(down_key);
+                    }
                     timeout
                 }
                 Lifecycle::Ended => Timeout::default(),
@@ -148,14 +150,17 @@ pub fn update_adjusting_state(
                         context.last_known_direction = dir;
                     }
                     (false, true, Some((down_key, up_key, dir))) => {
-                        println!("{:?}", moving.pos);
-                        adjusting.update_adjusting(resources, up_key, down_key);
+                        adjusting.update_adjusting(resources, Some((up_key, down_key)));
                         context.last_known_direction = dir;
                     }
                     _ => {
-                        resources.input.send_key_up(KeyKind::Left);
-                        resources.input.send_key_up(KeyKind::Right);
-                        moving = moving.completed(true);
+                        if adjusting_started {
+                            adjusting.update_adjusting(resources, None);
+                        } else {
+                            resources.input.send_key_up(KeyKind::Left);
+                            resources.input.send_key_up(KeyKind::Right);
+                            moving = moving.completed(true);
+                        }
                     }
                 }
             }
