@@ -296,42 +296,19 @@ fn SectionKeyBindings(
                     },
                     value: character_view().change_channel_key,
                 }
-                div { class: "col-span-full grid-cols-3 grid gap-2 justify-items-stretch",
-                    KeyBindingConfigurationInput {
-                        label: "Familiar menu",
-                        optional: true,
-                        disabled: character_view().id.is_none(),
-                        on_value: move |familiar_menu_key| {
-                            save_character(Character {
-                                familiar_menu_key,
-                                ..character_view.peek().clone()
-                            });
-                        },
-                        value: character_view().familiar_menu_key,
-                    }
-                    KeyBindingConfigurationInput {
-                        label: "Familiar skill",
-                        disabled: character_view().id.is_none(),
-                        on_value: move |key_config: Option<KeyBindingConfiguration>| {
-                            save_character(Character {
-                                familiar_buff_key: key_config.expect("not optional"),
-                                ..character_view.peek().clone()
-                            });
-                        },
-                        value: character_view().familiar_buff_key,
-                    }
-                    KeyBindingConfigurationInput {
-                        label: "Familiar essence",
-                        disabled: character_view().id.is_none(),
-                        on_value: move |key_config: Option<KeyBindingConfiguration>| {
-                            save_character(Character {
-                                familiar_essence_key: key_config.expect("not optional"),
-                                ..character_view.peek().clone()
-                            });
-                        },
-                        value: character_view().familiar_essence_key,
-                    }
+                KeyBindingConfigurationInput {
+                    label: "Familiar menu",
+                    optional: true,
+                    disabled: character_view().id.is_none(),
+                    on_value: move |familiar_menu_key| {
+                        save_character(Character {
+                            familiar_menu_key,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().familiar_menu_key,
                 }
+
             }
         }
     }
@@ -582,23 +559,48 @@ fn SectionBuffs(character_view: Memo<Character>, save_character: Callback<Charac
 
     rsx! {
         Section { name: "Buffs",
-            CharactersCheckbox {
-                label: "Familiar essence and skill",
-                div_class: "mb-2",
-                disabled: character_view().id.is_none(),
-                on_value: move |enabled| {
-                    let character = character_view.peek().clone();
-                    save_character(Character {
-                        familiar_buff_key: KeyBindingConfiguration {
-                            enabled,
-                            ..character.familiar_buff_key
-                        },
-                        ..character
-                    });
-                },
-                value: character_view().familiar_buff_key.enabled,
-            }
             div { class: "grid grid-cols-2 xl:grid-cols-4 gap-4",
+                div { class: "col-span-full flex gap-2",
+                    KeyBindingConfigurationInput {
+                        label: "Familiar skill",
+                        div_class: "flex-grow",
+                        disabled: character_view().id.is_none(),
+                        on_value: move |key_config: Option<KeyBindingConfiguration>| {
+                            save_character(Character {
+                                familiar_buff_key: key_config.expect("not optional"),
+                                ..character_view.peek().clone()
+                            });
+                        },
+                        value: character_view().familiar_buff_key,
+                    }
+                    KeyBindingConfigurationInput {
+                        label: "Familiar essence",
+                        div_class: "flex-grow",
+                        disabled: character_view().id.is_none(),
+                        on_value: move |key_config: Option<KeyBindingConfiguration>| {
+                            save_character(Character {
+                                familiar_essence_key: key_config.expect("not optional"),
+                                ..character_view.peek().clone()
+                            });
+                        },
+                        value: character_view().familiar_essence_key,
+                    }
+                    CharactersCheckbox {
+                        label: "Enabled",
+                        disabled: character_view().id.is_none(),
+                        on_value: move |enabled| {
+                            let character = character_view.peek().clone();
+                            save_character(Character {
+                                familiar_buff_key: KeyBindingConfiguration {
+                                    enabled,
+                                    ..character.familiar_buff_key
+                                },
+                                ..character
+                            });
+                        },
+                        value: character_view().familiar_buff_key.enabled,
+                    }
+                }
                 Buff {
                     label: "Sayram's Elixir",
                     disabled: character_view().id.is_none(),
