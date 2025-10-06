@@ -40,6 +40,9 @@ when play in `1920x1080` or above, making the UI blurry.
 points `x` distance should be less than `25`.
 
 ## Up jump key
+In general, this key is optional and meant for classes that have a separate skill to up jump. Below is details
+on how to set up this key.
+
 - If you are a mage class:
   - You need to set the `Teleport key`
   - If you have up jump, which most mage classes now have (e.g. holding up arrow + jump key), you don't need to set this key
@@ -49,7 +52,9 @@ points `x` distance should be less than `25`.
     - Jump and then teleport
     - Up jump and then teleport
 - If you are Demon Slayer, set this key to up arrow
-- If you are any other class with up jump skill such as Explorer Warriors, Blaster,... set this key to that skill
+- If you are any other class with up jump skill such as Explorer Warriors, Blaster,... set this key to that skill:
+  - If your up jump is too short and can be used mid-air (e.g. Night Lord), enable `Jump then up jump if possible`
+- If your up jump is through flying (e.g. Illium, Hoyoung), enable `Up jump is flight`
 
 ## Missing installation
 If you use the bot on a newly installed Windows, make sure [Visual C++ Redistributable 2015-2022](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist#visual-studio-2015-2017-2019-and-2022) and [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2?form=MA13LH) are installed.
