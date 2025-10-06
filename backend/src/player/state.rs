@@ -116,6 +116,8 @@ pub struct PlayerConfiguration {
     ///
     /// This also means the up jump can be performed mid-air.
     pub up_jump_specific_key_should_jump: bool,
+    /// Whether to disable [`Player::DoubleJumping`].
+    pub disable_double_jumping: bool,
     /// Whether to disable [`Player::Adjusting`].
     pub disable_adjusting: bool,
     /// Whether to disable teleportation in [`Player::Falling`].
@@ -169,6 +171,7 @@ impl Default for PlayerConfiguration {
     fn default() -> Self {
         Self {
             class: Class::default(),
+            disable_double_jumping: false,
             disable_adjusting: false,
             disable_teleport_on_fall: false,
             up_jump_is_flight: false,

@@ -348,6 +348,8 @@ pub struct Character {
     pub extreme_green_potion_key: KeyBindingConfiguration,
     pub extreme_gold_potion_key: KeyBindingConfiguration,
     pub class: Class,
+    #[serde(default)]
+    pub disable_double_jumping: bool,
     pub disable_adjusting: bool,
     #[serde(default)]
     pub disable_teleport_on_fall: bool,
@@ -423,6 +425,7 @@ impl Default for Character {
             extreme_green_potion_key: KeyBindingConfiguration::default(),
             extreme_gold_potion_key: KeyBindingConfiguration::default(),
             class: Class::default(),
+            disable_double_jumping: false,
             disable_adjusting: false,
             disable_teleport_on_fall: false,
             up_jump_is_flight: false,

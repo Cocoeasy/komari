@@ -280,10 +280,14 @@ pub fn update_moving_state(
     let (x_distance, _) = moving.x_distance_direction_from(true, cur_pos);
     let (y_distance, y_direction) = moving.y_distance_direction_from(true, cur_pos);
 
+    let disable_double_jumping = context.config.disable_double_jumping;
     let disable_adjusting = context.config.disable_adjusting;
 
     // Check to double jump
-    if !skip_destination && x_distance >= context.double_jump_threshold(is_intermediate) {
+    if !skip_destination
+        && !disable_double_jumping
+        && x_distance >= context.double_jump_threshold(is_intermediate)
+    {
         let require_stationary = context.has_ping_pong_action_only()
             && !matches!(
                 context.last_movement,

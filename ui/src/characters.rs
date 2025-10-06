@@ -507,6 +507,17 @@ fn SectionMovement(
                     value: character_view().disable_teleport_on_fall,
                 }
                 CharactersCheckbox {
+                    label: "Disable double jumping",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |disable_double_jumping| {
+                        save_character(Character {
+                            disable_double_jumping,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().disable_double_jumping,
+                }
+                CharactersCheckbox {
                     label: "Disable walking",
                     disabled: character_view().id.is_none(),
                     on_value: move |disable_adjusting| {

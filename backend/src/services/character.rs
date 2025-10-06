@@ -38,6 +38,7 @@ impl CharacterService for DefaultCharacterService {
         player_context.reset();
         if let Some(character) = self.character.as_ref() {
             player_context.config.class = character.class;
+            player_context.config.disable_double_jumping = character.disable_double_jumping;
             player_context.config.disable_adjusting = character.disable_adjusting;
             player_context.config.disable_teleport_on_fall = character.disable_teleport_on_fall;
             player_context.config.up_jump_is_flight = character.up_jump_is_flight;
@@ -75,6 +76,7 @@ mod tests {
     fn mock_character() -> Character {
         Character {
             class: Class::Cadena,
+            disable_double_jumping: true,
             disable_adjusting: true,
             disable_teleport_on_fall: true,
             up_jump_is_flight: true,
@@ -157,6 +159,10 @@ mod tests {
         service.apply_character(&mut state);
 
         assert_eq!(state.config.class, character.class);
+        assert_eq!(
+            state.config.disable_double_jumping,
+            character.disable_double_jumping
+        );
         assert_eq!(state.config.disable_adjusting, character.disable_adjusting);
         assert_eq!(
             state.config.disable_teleport_on_fall,

@@ -119,7 +119,11 @@ pub fn update_adjusting_state(
             let threshold = context.double_jump_threshold(is_intermediate);
             let (x_distance, x_direction) = moving.x_distance_direction_from(true, moving.pos);
 
-            transition_to_moving_if!(player, moving, x_distance >= threshold);
+            transition_to_moving_if!(
+                player,
+                moving,
+                !context.config.disable_double_jumping && x_distance >= threshold
+            );
 
             // Movement logics
             if !moving.completed {
