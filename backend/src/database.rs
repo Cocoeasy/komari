@@ -309,14 +309,10 @@ pub struct Character {
     pub up_jump_key: Option<KeyBindingConfiguration>,
     #[serde(default = "key_default")]
     pub interact_key: KeyBindingConfiguration,
-    #[serde(default = "key_default")]
-    pub cash_shop_key: KeyBindingConfiguration,
-    #[serde(default = "key_default")]
-    pub familiar_menu_key: KeyBindingConfiguration,
-    #[serde(default = "key_default")]
-    pub to_town_key: KeyBindingConfiguration,
-    #[serde(default = "key_default")]
-    pub change_channel_key: KeyBindingConfiguration,
+    pub cash_shop_key: Option<KeyBindingConfiguration>,
+    pub familiar_menu_key: Option<KeyBindingConfiguration>,
+    pub to_town_key: Option<KeyBindingConfiguration>,
+    pub change_channel_key: Option<KeyBindingConfiguration>,
     pub feed_pet_key: KeyBindingConfiguration,
     pub feed_pet_millis: u64,
     #[serde(default = "feed_pet_count_default", alias = "num_pets")]
@@ -396,10 +392,10 @@ impl Default for Character {
             jump_key: jump_key_default(),
             up_jump_key: None,
             interact_key: key_default(),
-            cash_shop_key: key_default(),
-            familiar_menu_key: key_default(),
-            to_town_key: key_default(),
-            change_channel_key: key_default(),
+            cash_shop_key: None,
+            familiar_menu_key: None,
+            to_town_key: None,
+            change_channel_key: None,
             feed_pet_key: KeyBindingConfiguration::default(),
             feed_pet_millis: 320000,
             feed_pet_count: feed_pet_count_default(),

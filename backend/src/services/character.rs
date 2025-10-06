@@ -48,10 +48,12 @@ impl CharacterService for DefaultCharacterService {
             player_context.config.teleport_key = character.teleport_key.map(|key| key.key.into());
             player_context.config.jump_key = character.jump_key.key.into();
             player_context.config.up_jump_key = character.up_jump_key.map(|key| key.key.into());
-            player_context.config.cash_shop_key = character.cash_shop_key.key.into();
-            player_context.config.familiar_key = character.familiar_menu_key.key.into();
-            player_context.config.to_town_key = character.to_town_key.key.into();
-            player_context.config.change_channel_key = character.change_channel_key.key.into();
+            player_context.config.cash_shop_key = character.cash_shop_key.map(|key| key.key.into());
+            player_context.config.familiar_key =
+                character.familiar_menu_key.map(|key| key.key.into());
+            player_context.config.to_town_key = character.to_town_key.map(|key| key.key.into());
+            player_context.config.change_channel_key =
+                character.change_channel_key.map(|key| key.key.into());
             player_context.config.potion_key = character.potion_key.key.into();
             player_context.config.use_potion_below_percent =
                 match (character.potion_key.enabled, character.potion_mode) {
@@ -97,22 +99,22 @@ mod tests {
                 key: KeyBinding::A,
                 ..Default::default()
             }),
-            cash_shop_key: KeyBindingConfiguration {
+            cash_shop_key: Some(KeyBindingConfiguration {
                 key: KeyBinding::B,
                 ..Default::default()
-            },
-            familiar_menu_key: KeyBindingConfiguration {
+            }),
+            familiar_menu_key: Some(KeyBindingConfiguration {
                 key: KeyBinding::N,
                 ..Default::default()
-            },
-            to_town_key: KeyBindingConfiguration {
+            }),
+            to_town_key: Some(KeyBindingConfiguration {
                 key: KeyBinding::M,
                 ..Default::default()
-            },
-            change_channel_key: KeyBindingConfiguration {
+            }),
+            change_channel_key: Some(KeyBindingConfiguration {
                 key: KeyBinding::L,
                 ..Default::default()
-            },
+            }),
             potion_key: KeyBindingConfiguration {
                 key: KeyBinding::P,
                 enabled: true,
@@ -170,10 +172,10 @@ mod tests {
         assert_eq!(state.config.teleport_key, Some(KeyKind::X));
         assert_eq!(state.config.jump_key, KeyKind::C);
         assert_eq!(state.config.up_jump_key, Some(KeyKind::A));
-        assert_eq!(state.config.cash_shop_key, KeyKind::B);
-        assert_eq!(state.config.familiar_key, KeyKind::N);
-        assert_eq!(state.config.to_town_key, KeyKind::M);
-        assert_eq!(state.config.change_channel_key, KeyKind::L);
+        assert_eq!(state.config.cash_shop_key, Some(KeyKind::B));
+        assert_eq!(state.config.familiar_key, Some(KeyKind::N));
+        assert_eq!(state.config.to_town_key, Some(KeyKind::M));
+        assert_eq!(state.config.change_channel_key, Some(KeyKind::L));
         assert_eq!(state.config.potion_key, KeyKind::P);
         assert_eq!(state.config.use_potion_below_percent, Some(0.5));
         assert_eq!(state.config.update_health_millis, Some(3000));

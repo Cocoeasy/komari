@@ -1,8 +1,13 @@
+use log::info;
+
 use super::{
     Player,
     timeout::{Lifecycle, Timeout, next_timeout_lifecycle},
 };
-use crate::{bridge::KeyKind, ecs::Resources, player::PlayerEntity, transition, transition_if};
+use crate::{
+    bridge::KeyKind, ecs::Resources, player::PlayerEntity, transition, transition_if,
+    try_some_transition,
+};
 
 #[derive(Clone, Copy, Debug)]
 enum State {
@@ -33,12 +38,14 @@ pub fn update_cash_shop_state(
     mut cash_shop: CashShop,
     failed_to_detect_player: bool,
 ) {
+    let cash_shop_key =
+        try_some_transition!(player, Player::Idle, player.context.config.cash_shop_key, {
+            info!(target: "player", "aborted entering cash shop because cash shop key is not set");
+            player.context.clear_action_completed();
+        });
+
     match cash_shop.state {
-        State::Entering => update_entering(
-            resources,
-            &mut cash_shop,
-            player.context.config.cash_shop_key,
-        ),
+        State::Entering => update_entering(resources, &mut cash_shop, cash_shop_key),
         State::Entered(timeout) => update_entered(&mut cash_shop, timeout),
         State::Exitting => update_exitting(resources, &mut cash_shop),
         State::Exitted => update_exitted(&mut cash_shop, failed_to_detect_player),

@@ -262,10 +262,11 @@ fn SectionKeyBindings(
                 }
                 KeyBindingConfigurationInput {
                     label: "Cash shop",
+                    optional: true,
                     disabled: character_view().id.is_none(),
-                    on_value: move |key_config: Option<KeyBindingConfiguration>| {
+                    on_value: move |cash_shop_key| {
                         save_character(Character {
-                            cash_shop_key: key_config.expect("not optional"),
+                            cash_shop_key,
                             ..character_view.peek().clone()
                         });
                     },
@@ -273,10 +274,11 @@ fn SectionKeyBindings(
                 }
                 KeyBindingConfigurationInput {
                     label: "To town",
+                    optional: true,
                     disabled: character_view().id.is_none(),
-                    on_value: move |key_config: Option<KeyBindingConfiguration>| {
+                    on_value: move |to_town_key| {
                         save_character(Character {
-                            to_town_key: key_config.expect("not optional"),
+                            to_town_key,
                             ..character_view.peek().clone()
                         });
                     },
@@ -284,10 +286,11 @@ fn SectionKeyBindings(
                 }
                 KeyBindingConfigurationInput {
                     label: "Change channel",
+                    optional: true,
                     disabled: character_view().id.is_none(),
-                    on_value: move |key_config: Option<KeyBindingConfiguration>| {
+                    on_value: move |change_channel_key| {
                         save_character(Character {
-                            change_channel_key: key_config.expect("not optional"),
+                            change_channel_key,
                             ..character_view.peek().clone()
                         });
                     },
@@ -296,10 +299,11 @@ fn SectionKeyBindings(
                 div { class: "col-span-full grid-cols-3 grid gap-2 justify-items-stretch",
                     KeyBindingConfigurationInput {
                         label: "Familiar menu",
+                        optional: true,
                         disabled: character_view().id.is_none(),
-                        on_value: move |key_config: Option<KeyBindingConfiguration>| {
+                        on_value: move |familiar_menu_key| {
                             save_character(Character {
-                                familiar_menu_key: key_config.expect("not optional"),
+                                familiar_menu_key,
                                 ..character_view.peek().clone()
                             });
                         },
@@ -504,7 +508,7 @@ fn SectionMovement(
                     value: character_view().up_jump_is_flight,
                 }
                 CharactersCheckbox {
-                    label: "Up jump's skill should jump first",
+                    label: "Jump then up jump if possible",
                     disabled: character_view().id.is_none(),
                     on_value: move |up_jump_specific_key_should_jump| {
                         save_character(Character {

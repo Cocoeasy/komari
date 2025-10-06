@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use log::debug;
+use log::{debug, info};
 use opencv::core::{Point, Rect};
 
 use super::{
@@ -14,7 +14,7 @@ use crate::{
     detect::{FamiliarLevel, FamiliarRank},
     ecs::Resources,
     player::{PlayerEntity, next_action},
-    transition, transition_from_action, transition_if, try_ok_transition,
+    transition, transition_from_action, transition_if, try_ok_transition, try_some_transition,
 };
 
 /// Number of familiar slots available.
@@ -105,11 +105,18 @@ pub fn update_familiars_swapping_state(resources: &Resources, player: &mut Playe
     let Player::FamiliarsSwapping(mut swapping) = player.state else {
         panic!("state is not familiars swapping")
     };
+    let familiar_key = try_some_transition!(
+        player,
+        Player::Idle,
+        player.context.config.familiar_key,
+        {
+            info!(target: "player", "aborted familiars swapping because familiar menu key is not set");
+            player.context.clear_action_completed();
+        }
+    );
 
     match swapping.state {
-        State::OpenMenu(_, _) => {
-            update_open_menu(resources, &mut swapping, player.context.config.familiar_key)
-        }
+        State::OpenMenu(_, _) => update_open_menu(resources, &mut swapping, familiar_key),
         State::OpenSetup(_, _) => update_open_setup(resources, &mut swapping),
         State::FindSlots => update_find_slots(resources, &mut swapping),
         State::FreeSlots(_, _) => update_free_slots(resources, &mut swapping),

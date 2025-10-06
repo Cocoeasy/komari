@@ -150,13 +150,13 @@ pub struct PlayerConfiguration {
     /// The up jump key with [`None`] indicating composite jump (Up arrow + Double Space).
     pub up_jump_key: Option<KeyKind>,
     /// The cash shop key.
-    pub cash_shop_key: KeyKind,
+    pub cash_shop_key: Option<KeyKind>,
     /// The familiar key.
-    pub familiar_key: KeyKind,
+    pub familiar_key: Option<KeyKind>,
     /// The going to town key.
-    pub to_town_key: KeyKind,
+    pub to_town_key: Option<KeyKind>,
     /// The change channel key.
-    pub change_channel_key: KeyKind,
+    pub change_channel_key: Option<KeyKind>,
     /// The potion key.
     pub potion_key: KeyKind,
     /// Uses potion when health is below a percentage.
@@ -185,10 +185,10 @@ impl Default for PlayerConfiguration {
             teleport_key: None,
             jump_key: KeyKind::A,
             up_jump_key: None,
-            cash_shop_key: KeyKind::A,
-            familiar_key: KeyKind::A,
-            to_town_key: KeyKind::A,
-            change_channel_key: KeyKind::A,
+            cash_shop_key: None,
+            familiar_key: None,
+            to_town_key: None,
+            change_channel_key: None,
             potion_key: KeyKind::A,
             use_potion_below_percent: None,
             update_health_millis: None,

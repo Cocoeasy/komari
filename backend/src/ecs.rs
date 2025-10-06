@@ -67,6 +67,16 @@ macro_rules! try_some_transition {
             }
         }
     };
+    ($entity:expr, $state:expr, $expr:expr, $block:block) => {
+        match $expr {
+            Some(val) => val,
+            None => {
+                $block
+                $entity.state = $state;
+                return;
+            }
+        }
+    };
 }
 
 #[macro_export]

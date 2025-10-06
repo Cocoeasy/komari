@@ -1,3 +1,5 @@
+use log::info;
+
 use super::{Player, actions::PanicTo, timeout::Timeout};
 use crate::{
     bridge::KeyKind,
@@ -7,7 +9,7 @@ use crate::{
         PlayerEntity, next_action,
         timeout::{Lifecycle, next_timeout_lifecycle},
     },
-    transition, transition_from_action, transition_if,
+    transition, transition_from_action, transition_if, try_some_transition,
 };
 
 const MAX_RETRY: u32 = 3;
@@ -47,16 +49,26 @@ pub fn update_panicking_state(
     minimap_state: Minimap,
     mut panicking: Panicking,
 ) {
-    match panicking.state {
-        State::ChangingChannel(_, _) => update_changing_channel(
-            resources,
-            &mut panicking,
-            minimap_state,
-            player.context.config.change_channel_key,
-        ),
-        State::GoingToTown(_, _) => {
-            update_going_to_town(resources, &mut panicking, player.context.config.to_town_key)
+    let change_channel_key = try_some_transition!(
+        player,
+        Player::Idle,
+        player.context.config.change_channel_key,
+        {
+            info!(target: "player", "aborted panicking because change channel key is not set");
+            player.context.clear_action_completed();
         }
+    );
+    let to_town_key =
+        try_some_transition!(player, Player::Idle, player.context.config.to_town_key, {
+            info!(target: "player", "aborted panicking because to town key is not set");
+            player.context.clear_action_completed();
+        });
+
+    match panicking.state {
+        State::ChangingChannel(_, _) => {
+            update_changing_channel(resources, &mut panicking, minimap_state, change_channel_key)
+        }
+        State::GoingToTown(_, _) => update_going_to_town(resources, &mut panicking, to_town_key),
         State::Completing(_, _) => update_completing(&mut panicking, minimap_state),
     };
 
