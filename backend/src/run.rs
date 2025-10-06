@@ -17,7 +17,7 @@ use crate::{
     bridge::{Capture, DefaultCapture, DefaultInput, InputMethod},
     buff::{self, Buff, BuffContext, BuffEntity, BuffKind},
     database::{query_seeds, query_settings},
-    detect::CachedDetector,
+    detect::DefaultDetector,
     ecs::{Resources, World, WorldEvent},
     mat::OwnedMat,
     minimap::{self, Minimap, MinimapContext, MinimapEntity},
@@ -135,7 +135,7 @@ fn systems_loop() {
         let detector = capture
             .grab()
             .map(OwnedMat::new_from_frame)
-            .map(CachedDetector::new);
+            .map(DefaultDetector::new);
         let was_capturing_normally = is_capturing_normally;
         let player_in_cash_shop = matches!(world.player.state, Player::CashShopThenExit(_));
 

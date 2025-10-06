@@ -8,6 +8,7 @@ use strum::EnumIter;
 
 use crate::{
     Character, Settings,
+    detect::BuffKind as DetectorBuffKind,
     ecs::Resources,
     player::Player,
     task::{Task, Update, update_detection_task},
@@ -62,6 +63,7 @@ impl BuffContext {
                 | BuffKind::AureliaElixir
                 | BuffKind::ExpCouponX2
                 | BuffKind::ExpCouponX3
+                | BuffKind::ExpCouponX4
                 | BuffKind::BonusExpCoupon
                 | BuffKind::ForTheGuild
                 | BuffKind::HardHitter
@@ -81,8 +83,10 @@ impl BuffContext {
             BuffKind::Familiar => character.familiar_buff_key.enabled,
             BuffKind::SayramElixir => character.sayram_elixir_key.enabled,
             BuffKind::AureliaElixir => character.aurelia_elixir_key.enabled,
-            BuffKind::ExpCouponX2 | BuffKind::ExpCouponX3 => {
-                character.exp_x2_key.enabled || character.exp_x3_key.enabled
+            BuffKind::ExpCouponX2 | BuffKind::ExpCouponX3 | BuffKind::ExpCouponX4 => {
+                character.exp_x2_key.enabled
+                    || character.exp_x3_key.enabled
+                    || character.exp_x4_key.enabled
             }
             BuffKind::BonusExpCoupon => character.bonus_exp_key.enabled,
             BuffKind::LegionWealth => character.legion_wealth_key.enabled,
@@ -122,6 +126,7 @@ pub enum BuffKind {
     AureliaElixir,
     ExpCouponX2,
     ExpCouponX3,
+    ExpCouponX4,
     BonusExpCoupon,
     LegionWealth,
     LegionLuck,
@@ -155,6 +160,35 @@ impl IndexMut<BuffKind> for BuffEntities {
     }
 }
 
+impl From<BuffKind> for DetectorBuffKind {
+    fn from(kind: BuffKind) -> Self {
+        match kind {
+            BuffKind::Rune => DetectorBuffKind::Rune,
+            BuffKind::Familiar => DetectorBuffKind::Familiar,
+            BuffKind::SayramElixir => DetectorBuffKind::SayramElixir,
+            BuffKind::AureliaElixir => DetectorBuffKind::AureliaElixir,
+            BuffKind::ExpCouponX2 => DetectorBuffKind::ExpCouponX2,
+            BuffKind::ExpCouponX3 => DetectorBuffKind::ExpCouponX3,
+            BuffKind::ExpCouponX4 => DetectorBuffKind::ExpCouponX4,
+            BuffKind::BonusExpCoupon => DetectorBuffKind::BonusExpCoupon,
+            BuffKind::LegionWealth => DetectorBuffKind::LegionWealth,
+            BuffKind::LegionLuck => DetectorBuffKind::LegionLuck,
+            BuffKind::WealthAcquisitionPotion => DetectorBuffKind::WealthAcquisitionPotion,
+            BuffKind::ExpAccumulationPotion => DetectorBuffKind::ExpAccumulationPotion,
+            BuffKind::SmallWealthAcquisitionPotion => {
+                DetectorBuffKind::SmallWealthAcquisitionPotion
+            }
+            BuffKind::SmallExpAccumulationPotion => DetectorBuffKind::SmallExpAccumulationPotion,
+            BuffKind::ForTheGuild => DetectorBuffKind::ForTheGuild,
+            BuffKind::HardHitter => DetectorBuffKind::HardHitter,
+            BuffKind::ExtremeRedPotion => DetectorBuffKind::ExtremeRedPotion,
+            BuffKind::ExtremeBluePotion => DetectorBuffKind::ExtremeBluePotion,
+            BuffKind::ExtremeGreenPotion => DetectorBuffKind::ExtremeGreenPotion,
+            BuffKind::ExtremeGoldPotion => DetectorBuffKind::ExtremeGoldPotion,
+        }
+    }
+}
+
 /// Buff contextual state.
 #[derive(Clone, Copy, Debug)]
 pub enum Buff {
@@ -174,7 +208,7 @@ pub fn run_system(resources: &Resources, buff: &mut BuffEntity, player_state: Pl
     let kind = buff.context.kind;
     let Update::Ok(has_buff) =
         update_detection_task(resources, 5000, &mut buff.context.task, move |detector| {
-            Ok(detector.detect_player_buff(kind))
+            Ok(detector.detect_player_buff(kind.into()))
         })
     else {
         return;
@@ -206,9 +240,9 @@ pub fn run_system(resources: &Resources, buff: &mut BuffEntity, player_state: Pl
 #[cfg(test)]
 mod tests {
     use std::assert_matches::assert_matches;
+    use std::mem::discriminant;
     use std::time::Duration;
 
-    use mockall::predicate::eq;
     use strum::IntoEnumIterator;
     use tokio::time::advance;
 
@@ -220,7 +254,9 @@ mod tests {
         let mut detector = MockDetector::new();
         detector
             .expect_detect_player_buff()
-            .with(eq(kind))
+            .withf(move |detector_kind| {
+                discriminant(detector_kind) == discriminant(&DetectorBuffKind::from(kind))
+            })
             .return_const(result);
         detector
             .expect_clone()

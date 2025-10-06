@@ -332,6 +332,8 @@ pub struct Character {
     #[serde(default)]
     pub exp_x2_key: KeyBindingConfiguration,
     pub exp_x3_key: KeyBindingConfiguration,
+    #[serde(default)]
+    pub exp_x4_key: KeyBindingConfiguration,
     pub bonus_exp_key: KeyBindingConfiguration,
     pub legion_wealth_key: KeyBindingConfiguration,
     pub legion_luck_key: KeyBindingConfiguration,
@@ -410,6 +412,7 @@ impl Default for Character {
             aurelia_elixir_key: KeyBindingConfiguration::default(),
             exp_x2_key: KeyBindingConfiguration::default(),
             exp_x3_key: KeyBindingConfiguration::default(),
+            exp_x4_key: KeyBindingConfiguration::default(),
             bonus_exp_key: KeyBindingConfiguration::default(),
             legion_wealth_key: KeyBindingConfiguration::default(),
             legion_luck_key: KeyBindingConfiguration::default(),

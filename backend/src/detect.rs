@@ -43,7 +43,7 @@ use ort::{
 use crate::bridge::KeyKind;
 #[cfg(debug_assertions)]
 use crate::debug::{debug_mat, debug_spinning_arrows};
-use crate::{array::Array, buff::BuffKind, mat::OwnedMat};
+use crate::{array::Array, mat::OwnedMat};
 
 const MAX_ARROWS: usize = 4;
 const MAX_SPIN_ARROWS: usize = 2; // PRAY
@@ -105,6 +105,30 @@ pub enum FamiliarLevel {
 pub enum FamiliarRank {
     Rare,
     Epic,
+}
+
+#[derive(Debug)]
+pub enum BuffKind {
+    Rune,
+    Familiar,
+    SayramElixir,
+    AureliaElixir,
+    ExpCouponX2,
+    ExpCouponX3,
+    ExpCouponX4,
+    BonusExpCoupon,
+    LegionWealth,
+    LegionLuck,
+    WealthAcquisitionPotion,
+    ExpAccumulationPotion,
+    SmallWealthAcquisitionPotion,
+    SmallExpAccumulationPotion,
+    ForTheGuild,
+    HardHitter,
+    ExtremeRedPotion,
+    ExtremeBluePotion,
+    ExtremeGreenPotion,
+    ExtremeGoldPotion,
 }
 
 /// A trait for detecting objects from provided frame.
@@ -300,21 +324,16 @@ mock! {
 
 type MatFn = Box<dyn FnOnce() -> Mat + Send>;
 
-/// A detector that temporary caches the transformed `Mat`.
-///
-/// It is useful when there are multiple detections in a single tick that
-/// rely on grayscale (e.g. buffs).
-///
-/// TODO: Is it really useful?
+/// A detector that lazily transform `Mat`.
 #[derive(Clone, Debug)]
-pub struct CachedDetector {
+pub struct DefaultDetector {
     mat: Arc<OwnedMat>,
     grayscale: Arc<LazyLock<Mat, MatFn>>,
     buffs_grayscale: Arc<LazyLock<Mat, MatFn>>,
 }
 
-impl CachedDetector {
-    pub fn new(mat: OwnedMat) -> CachedDetector {
+impl DefaultDetector {
+    pub fn new(mat: OwnedMat) -> DefaultDetector {
         let mat = Arc::new(mat);
         let grayscale = mat.clone();
         let grayscale = Arc::new(LazyLock::<Mat, MatFn>::new(Box::new(move || {
@@ -332,7 +351,7 @@ impl CachedDetector {
     }
 }
 
-impl Detector for CachedDetector {
+impl Detector for DefaultDetector {
     fn mat(&self) -> &OwnedMat {
         &self.mat
     }
@@ -436,6 +455,7 @@ impl Detector for CachedDetector {
             | BuffKind::AureliaElixir
             | BuffKind::ExpCouponX2
             | BuffKind::ExpCouponX3
+            | BuffKind::ExpCouponX4
             | BuffKind::BonusExpCoupon
             | BuffKind::ForTheGuild
             | BuffKind::HardHitter => &**self.buffs_grayscale,
@@ -1272,6 +1292,13 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         )
         .unwrap()
     });
+    static EXP_COUPON_X4_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXP_COUPON_X4_BUFF_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
     static BONUS_EXP_COUPON_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("BONUS_EXP_COUPON_BUFF_TEMPLATE")),
@@ -1416,6 +1443,7 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         | BuffKind::SayramElixir
         | BuffKind::ExpCouponX2
         | BuffKind::ExpCouponX3
+        | BuffKind::ExpCouponX4
         | BuffKind::BonusExpCoupon
         | BuffKind::ForTheGuild
         | BuffKind::HardHitter
@@ -1431,6 +1459,7 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         BuffKind::AureliaElixir => &*AURELIA_ELIXIR_BUFF,
         BuffKind::ExpCouponX2 => &*EXP_COUPON_X2_BUFF,
         BuffKind::ExpCouponX3 => &*EXP_COUPON_X3_BUFF,
+        BuffKind::ExpCouponX4 => &*EXP_COUPON_X4_BUFF,
         BuffKind::BonusExpCoupon => &*BONUS_EXP_COUPON_BUFF,
         BuffKind::LegionWealth => &*LEGION_WEALTH_BUFF,
         BuffKind::LegionLuck => &*LEGION_LUCK_BUFF,

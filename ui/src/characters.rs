@@ -628,7 +628,6 @@ fn SectionBuffs(character_view: Memo<Character>, save_character: Callback<Charac
                     },
                     value: character_view().exp_x2_key,
                 }
-                div {}
                 Buff {
                     label: "3x EXP Coupon",
                     disabled: character_view().id.is_none(),
@@ -639,6 +638,17 @@ fn SectionBuffs(character_view: Memo<Character>, save_character: Callback<Charac
                         });
                     },
                     value: character_view().exp_x3_key,
+                }
+                Buff {
+                    label: "4x EXP Coupon",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |exp_x4_key| {
+                        save_character(Character {
+                            exp_x4_key,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().exp_x4_key,
                 }
                 Buff {
                     label: "50% Bonus EXP Coupon",

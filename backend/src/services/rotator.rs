@@ -198,6 +198,10 @@ fn buffs_from(character: &Character) -> Vec<(BuffKind, KeyBinding)> {
                     .exp_x3_key
                     .enabled
                     .then_some(character.exp_x3_key.key),
+                BuffKind::ExpCouponX4 => character
+                    .exp_x4_key
+                    .enabled
+                    .then_some(character.exp_x4_key.key),
                 BuffKind::BonusExpCoupon => character
                     .bonus_exp_key
                     .enabled

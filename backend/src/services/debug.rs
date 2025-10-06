@@ -14,7 +14,7 @@ use tokio::sync::broadcast::{self, Receiver, Sender};
 use crate::{
     DebugState,
     debug::{save_image_for_training, save_image_for_training_to, save_minimap_for_training},
-    detect::{ArrowsCalibrating, ArrowsState, CachedDetector, Detector},
+    detect::{ArrowsCalibrating, ArrowsState, DefaultDetector, Detector},
     ecs::Resources,
     mat::OwnedMat,
 };
@@ -133,7 +133,8 @@ impl DebugService {
         calibrating.enable_spin_test();
 
         for mat in &*SPIN_TEST_IMAGES {
-            match CachedDetector::new(OwnedMat::from(mat.clone())).detect_rune_arrows(calibrating) {
+            match DefaultDetector::new(OwnedMat::from(mat.clone())).detect_rune_arrows(calibrating)
+            {
                 Ok(ArrowsState::Complete(arrows)) => {
                     debug!(target: "test", "spin test completed {arrows:?}");
                     break;
