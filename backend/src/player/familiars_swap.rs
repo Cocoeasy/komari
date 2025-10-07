@@ -36,7 +36,7 @@ enum State {
     /// Try releasing a single slot.
     FreeSlot(Timeout, usize),
     /// Find swappable familiar cards.
-    FindCards,
+    FindCards(Timeout),
     /// Swapping a card into an empty slot.
     Swapping(Timeout, usize),
     /// Scrolling the familiar cards list to find more cards.
@@ -72,7 +72,7 @@ impl Display for FamiliarsSwapping {
             State::FreeSlots(_, _) | State::FreeSlot(_, _) => {
                 write!(f, "Freeing Slots")
             }
-            State::FindCards => write!(f, "Finding Cards"),
+            State::FindCards(_) => write!(f, "Finding Cards"),
             State::Swapping(_, _) => write!(f, "Swapping"),
             State::Scrolling(_, _, _) => write!(f, "Scrolling"),
             State::Saving(_, _) => write!(f, "Saving"),
@@ -121,7 +121,7 @@ pub fn update_familiars_swapping_state(resources: &Resources, player: &mut Playe
         State::FindSlots => update_find_slots(resources, &mut swapping),
         State::FreeSlots(_, _) => update_free_slots(resources, &mut swapping),
         State::FreeSlot(_, _) => update_free_slot(resources, &mut swapping),
-        State::FindCards => update_find_cards(resources, &mut swapping),
+        State::FindCards(_) => update_find_cards(resources, &mut swapping),
         State::Swapping(_, _) => update_swapping(resources, &mut swapping),
         State::Scrolling(_, _, _) => update_scrolling(resources, &mut swapping),
         State::Saving(_, _) => update_saving(resources, &mut swapping),
@@ -156,12 +156,12 @@ fn update_open_menu(resources: &Resources, swapping: &mut FamiliarsSwapping, key
             );
             transition_if!(
                 swapping,
-                State::OpenSetup(timeout, retry_count),
+                State::OpenSetup(Timeout::default(), 0),
                 resources.detector().detect_familiar_menu_opened()
             );
             transition_if!(
                 swapping,
-                State::OpenMenu(Timeout::default(), retry_count + 1),
+                State::OpenMenu(timeout, retry_count + 1),
                 retry_count < MAX_RETRY,
                 {
                     resources.input.send_key(key);
@@ -252,7 +252,7 @@ fn update_free_slots(resources: &Resources, swapping: &mut FamiliarsSwapping) {
     fn find_cards_or_complete(resources: &Resources, swapping: &mut FamiliarsSwapping) {
         transition_if!(
             swapping,
-            State::FindCards,
+            State::FindCards(Timeout::default()),
             swapping.slots.iter().any(|slot| slot.1),
             {
                 if let Ok(bbox) = resources.detector().detect_familiar_level_button() {
@@ -343,7 +343,7 @@ fn update_free_slot(resources: &Resources, swapping: &mut FamiliarsSwapping) {
                             // starts finding cards for swapping
                             transition_if!(
                                 swapping,
-                                State::FindCards,
+                                State::FindCards(Timeout::default()),
                                 swapping.slots.iter().any(|slot| slot.1),
                                 {
                                     resources.input.send_mouse(
@@ -388,32 +388,44 @@ fn update_free_slot(resources: &Resources, swapping: &mut FamiliarsSwapping) {
 }
 
 fn update_find_cards(resources: &Resources, swapping: &mut FamiliarsSwapping) {
-    if swapping.cards.is_empty() {
-        let vec = resources.detector().detect_familiar_cards();
-        transition_if!(
-            swapping,
-            State::Scrolling(Timeout::default(), None, 0),
-            vec.is_empty()
-        );
+    let State::FindCards(timeout) = swapping.state else {
+        panic!("familiars swapping state is not finding cards");
+    };
 
-        for pair in vec {
-            let rarity = match pair.1 {
-                FamiliarRank::Rare => FamiliarRarity::Rare,
-                FamiliarRank::Epic => FamiliarRarity::Epic,
-            };
-            if swapping.swappable_rarities.iter().any(|r| *r == rarity) {
-                swapping.cards.push(pair.0);
+    // Timeout for ensuring sorting takes effect
+    match next_timeout_lifecycle(timeout, 5) {
+        Lifecycle::Ended => {
+            if swapping.cards.is_empty() {
+                let vec = resources.detector().detect_familiar_cards();
+                transition_if!(
+                    swapping,
+                    State::Scrolling(Timeout::default(), None, 0),
+                    vec.is_empty()
+                );
+
+                for pair in vec {
+                    let rarity = match pair.1 {
+                        FamiliarRank::Rare => FamiliarRarity::Rare,
+                        FamiliarRank::Epic => FamiliarRarity::Epic,
+                    };
+                    if swapping.swappable_rarities.iter().any(|r| *r == rarity) {
+                        swapping.cards.push(pair.0);
+                    }
+                }
             }
+
+            transition_if!(
+                swapping,
+                // Try scroll even if it is empty
+                State::Scrolling(Timeout::default(), None, 0),
+                State::Swapping(Timeout::default(), 0),
+                swapping.cards.is_empty()
+            );
+        }
+        Lifecycle::Started(timeout) | Lifecycle::Updated(timeout) => {
+            transition!(swapping, State::FindCards(timeout))
         }
     }
-
-    transition_if!(
-        swapping,
-        // Try scroll even if it is empty
-        State::Scrolling(Timeout::default(), None, 0),
-        State::Swapping(Timeout::default(), 0),
-        swapping.cards.is_empty()
-    );
 }
 
 fn update_swapping(resources: &Resources, swapping: &mut FamiliarsSwapping) {
@@ -536,7 +548,7 @@ fn update_scrolling(resources: &Resources, swapping: &mut FamiliarsSwapping) {
 
             transition_if!(
                 swapping,
-                State::FindCards,
+                State::FindCards(Timeout::default()),
                 (current_scrollbar.y - scrollbar.unwrap().y).abs() >= SCROLLBAR_SCROLLED_THRESHOLD,
                 {
                     swapping.cards = Array::new(); // Reset cards array
@@ -548,6 +560,7 @@ fn update_scrolling(resources: &Resources, swapping: &mut FamiliarsSwapping) {
             transition_if!(
                 swapping,
                 State::Scrolling(Timeout::default(), Some(current_scrollbar), retry_count + 1),
+                State::Completing(Timeout::default(), false),
                 retry_count < MAX_RETRY
             );
         }
@@ -688,7 +701,7 @@ mod tests {
 
         update_free_slots(&resources, &mut swapping);
 
-        assert_matches!(swapping.state, State::FindCards);
+        assert_matches!(swapping.state, State::FindCards(_));
     }
 
     #[test]
