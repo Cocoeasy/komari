@@ -7,7 +7,7 @@ use super::{
 use crate::{
     ecs::Resources,
     minimap::Minimap,
-    player::{MOVE_TIMEOUT, PlayerEntity, next_action, timeout::ChangeAxis},
+    player::{MOVE_TIMEOUT, PlayerEntity, moving::Moving, next_action, timeout::ChangeAxis},
     transition, transition_if, transition_to_moving, transition_to_moving_if,
 };
 
@@ -17,14 +17,34 @@ pub const GRAPPLING_THRESHOLD: i32 = 24;
 /// Maximum y distance from the destination allowed to perform a grappling hook.
 pub const GRAPPLING_MAX_THRESHOLD: i32 = 41;
 
-/// Timeout for grappling.
-const TIMEOUT: u32 = MOVE_TIMEOUT * 8;
+/// Timeout for when grappling is still casting and y position not changed.
+const INITIAL_TIMEOUT: u32 = MOVE_TIMEOUT * 8;
 
-/// Timeout after stopping grappling.
+/// Timeout after y position started changing.
 const STOPPING_TIMEOUT: u32 = MOVE_TIMEOUT + 3;
 
 /// Maximum y distance allowed to stop grappling.
 const STOPPING_THRESHOLD: i32 = 3;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Grappling {
+    pub moving: Moving,
+    did_y_changed: bool,
+}
+
+impl Grappling {
+    pub fn new(moving: Moving) -> Self {
+        Self {
+            moving,
+            did_y_changed: false,
+        }
+    }
+
+    fn moving(mut self, moving: Moving) -> Self {
+        self.moving = moving;
+        self
+    }
+}
 
 /// Updates the [`Player::Grappling`] contextual state.
 ///
@@ -37,7 +57,7 @@ pub fn update_grappling_state(
     player: &mut PlayerEntity,
     minimap_state: Minimap,
 ) {
-    let Player::Grappling(moving) = player.state else {
+    let Player::Grappling(mut grappling) = player.state else {
         panic!("state is not grappling");
     };
     let key = player
@@ -45,39 +65,42 @@ pub fn update_grappling_state(
         .config
         .grappling_key
         .expect("cannot transition if not set");
-    let prev_pos = moving.pos;
+    let prev_pos = grappling.moving.pos;
+    let timeout = if grappling.did_y_changed {
+        STOPPING_TIMEOUT
+    } else {
+        INITIAL_TIMEOUT
+    };
 
     match next_moving_lifecycle_with_axis(
-        moving,
+        grappling.moving,
         player.context.last_known_pos.expect("in positional state"),
-        TIMEOUT,
-        ChangeAxis::Vertical,
+        timeout,
+        ChangeAxis::Both,
     ) {
-        MovingLifecycle::Started(moving) => transition!(player, Player::Grappling(moving), {
-            player.context.last_movement = Some(LastMovement::Grappling);
-            resources.input.send_key(key);
-        }),
+        MovingLifecycle::Started(moving) => {
+            transition!(player, Player::Grappling(grappling.moving(moving)), {
+                player.context.last_movement = Some(LastMovement::Grappling);
+                resources.input.send_key(key);
+            })
+        }
         MovingLifecycle::Ended(moving) => transition_to_moving!(player, moving),
         MovingLifecycle::Updated(mut moving) => {
             let cur_pos = moving.pos;
             let (y_distance, y_direction) = moving.y_distance_direction_from(true, cur_pos);
-            let x_changed = prev_pos.x != cur_pos.x;
+            let y_changed = prev_pos.y != cur_pos.y;
 
-            if moving.timeout.current >= MOVE_TIMEOUT && x_changed {
-                // During double jump and grappling failed
-                moving.timeout.current = TIMEOUT;
+            if !grappling.did_y_changed {
+                grappling.did_y_changed = y_changed;
+            }
+            if !moving.completed
+                && (y_direction <= 0 || y_distance <= stopping_threshold(player.context.velocity.1))
+            {
+                resources.input.send_key(player.context.config.jump_key);
                 moving.completed = true;
             }
-            if !moving.completed {
-                if y_direction <= 0 || y_distance <= stopping_threshold(player.context.velocity.1) {
-                    resources.input.send_key(key);
-                    moving.completed = true;
-                }
-            } else if moving.timeout.current >= STOPPING_TIMEOUT {
-                moving.timeout.current = TIMEOUT;
-            }
             // Sets initial next state first
-            player.state = Player::Grappling(moving);
+            player.state = Player::Grappling(grappling.moving(moving));
 
             match next_action(&player.context) {
                 Some(PlayerAction::AutoMob(mob)) => {
@@ -129,7 +152,7 @@ pub fn update_grappling_state(
 /// Converts vertical velocity to a stopping threshold.
 #[inline]
 fn stopping_threshold(velocity: f32) -> i32 {
-    (STOPPING_THRESHOLD as f32 + 1.07 * velocity).round() as i32
+    (STOPPING_THRESHOLD as f32 + 0.7 * velocity).round() as i32
 }
 
 #[cfg(test)]
@@ -151,6 +174,7 @@ mod tests {
         let mut context = PlayerContext::default();
         context.last_known_pos = Some(pos);
         context.config.grappling_key = Some(KeyKind::F);
+        context.config.jump_key = KeyKind::Space;
 
         PlayerEntity {
             state: Player::Idle,
@@ -166,7 +190,7 @@ mod tests {
     fn update_grappling_state_started() {
         let moving = mock_moving(POS);
         let mut player = mock_player_entity_with_grapple(POS);
-        player.state = Player::Grappling(moving);
+        player.state = Player::Grappling(Grappling::new(moving));
 
         let mut keys = MockInput::new();
         keys.expect_send_key().once().with(eq(KeyKind::F));
@@ -176,32 +200,35 @@ mod tests {
 
         assert_matches!(
             player.state,
-            Player::Grappling(Moving {
-                timeout: Timeout { started: true, .. },
-                ..
+            Player::Grappling(Grappling {
+                moving: Moving {
+                    timeout: Timeout { started: true, .. },
+                    ..
+                },
+                did_y_changed: false
             })
         );
         assert_eq!(player.context.last_movement, Some(LastMovement::Grappling));
     }
 
     #[test]
-    fn update_grappling_state_updated_timeout_x_changed() {
-        let mut moving = mock_moving(Point::new(POS.x + 10, POS.y)); // x changed
-        moving.timeout.current = MOVE_TIMEOUT;
+    fn update_grappling_state_updated_auto_complete_on_stopping_threshold() {
+        let mut moving = mock_moving(POS);
         moving.timeout.started = true;
-        let mut player = mock_player_entity_with_grapple(POS);
-        player.state = Player::Grappling(moving);
+        moving.timeout.current = STOPPING_TIMEOUT;
+        let mut player = mock_player_entity_with_grapple(moving.pos);
+        player.state = Player::Grappling(Grappling::new(moving));
 
-        let resources = Resources::new(None, None);
+        let mut keys = MockInput::new();
+        keys.expect_send_key().once().with(eq(KeyKind::Space));
+        let resources = Resources::new(Some(keys), None);
 
         update_grappling_state(&resources, &mut player, Minimap::Detecting);
-
         assert_matches!(
             player.state,
-            Player::Grappling(Moving {
-                completed: true,
-                timeout: Timeout {
-                    current: TIMEOUT,
+            Player::Grappling(Grappling {
+                moving: Moving {
+                    completed: true,
                     ..
                 },
                 ..
@@ -210,35 +237,33 @@ mod tests {
     }
 
     #[test]
-    fn update_grappling_state_updated_auto_complete_on_stopping_threshold() {
-        let mut moving = mock_moving(Point::new(100, 100));
+    fn update_grappling_state_sets_did_y_changed() {
+        let resources = Resources::new(None, None);
+        let mut moving = mock_moving(POS);
         moving.timeout.started = true;
-        moving.timeout.current = STOPPING_TIMEOUT;
+        moving.dest = Point {
+            y: POS.y + 100,
+            x: POS.x,
+        };
+        let grappling = Grappling::new(moving);
         let mut player = mock_player_entity_with_grapple(moving.pos);
-        player.state = Player::Grappling(moving);
-
-        let mut keys = MockInput::new();
-        keys.expect_send_key().once().with(eq(KeyKind::F));
-        let resources = Resources::new(Some(keys), None);
+        player.state = Player::Grappling(grappling);
 
         update_grappling_state(&resources, &mut player, Minimap::Detecting);
         assert_matches!(
             player.state,
-            Player::Grappling(Moving {
-                completed: true,
+            Player::Grappling(Grappling {
+                did_y_changed: false,
                 ..
             })
         );
 
+        player.context.last_known_pos = Some(Point { x: 100, y: 150 });
         update_grappling_state(&resources, &mut player, Minimap::Detecting);
         assert_matches!(
             player.state,
-            Player::Grappling(Moving {
-                completed: true,
-                timeout: Timeout {
-                    current: TIMEOUT,
-                    ..
-                },
+            Player::Grappling(Grappling {
+                did_y_changed: true,
                 ..
             })
         );

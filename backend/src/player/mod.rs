@@ -25,7 +25,10 @@ use crate::{
     database::ActionKeyDirection,
     ecs::Resources,
     minimap::{Minimap, MinimapEntity},
-    player::chat::{Chatting, update_chatting_state},
+    player::{
+        chat::{Chatting, update_chatting_state},
+        grapple::Grappling,
+    },
     transition, transition_if,
 };
 
@@ -83,7 +86,7 @@ pub enum Player {
     /// Performs double jump action.
     DoubleJumping(DoubleJumping),
     /// Performs a grappling action.
-    Grappling(Moving),
+    Grappling(Grappling),
     /// Performs a normal jump.
     Jumping(Moving),
     /// Performs an up jump action.
@@ -132,7 +135,7 @@ impl Player {
                     moving.x_distance_direction_from(true, cur_pos.unwrap_or(moving.pos));
                 distance >= OVERRIDABLE_DISTANCE
             }
-            Player::Grappling(moving)
+            Player::Grappling(Grappling { moving, .. })
             | Player::Jumping(moving)
             | Player::UpJumping(UpJumping { moving, .. })
             | Player::Falling {

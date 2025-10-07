@@ -21,7 +21,7 @@ use crate::{
     player::{
         PlayerEntity,
         adjust::{ADJUSTING_MEDIUM_THRESHOLD, ADJUSTING_SHORT_THRESHOLD, Adjusting},
-        grapple::GRAPPLING_THRESHOLD,
+        grapple::{GRAPPLING_THRESHOLD, Grappling},
         next_action,
         solve_rune::SolvingRune,
         use_key::UseKey,
@@ -320,7 +320,11 @@ pub fn update_moving_state(
             || (has_teleport_key && y_distance >= GRAPPLING_MAX_THRESHOLD))
         && !context.should_disable_grappling()
     {
-        return abort_action_on_state_repeat(player, Player::Grappling(moving), minimap_state);
+        return abort_action_on_state_repeat(
+            player,
+            Player::Grappling(Grappling::new(moving)),
+            minimap_state,
+        );
     }
 
     // Check to up jump

@@ -19,6 +19,7 @@ use crate::{
     minimap::Minimap,
     player::{
         PlayerEntity,
+        grapple::Grappling,
         moving::MOVE_TIMEOUT,
         next_action,
         state::LastMovement,
@@ -264,7 +265,9 @@ fn next_updated_state(
     if !ignore_grappling && moving.completed && x_distance <= GRAPPLING_THRESHOLD {
         let (_, y_direction) = moving.y_distance_direction_from(true, moving.pos);
         if y_direction > 0 {
-            return Player::Grappling(moving.completed(false).timeout(Timeout::default()));
+            return Player::Grappling(Grappling::new(
+                moving.completed(false).timeout(Timeout::default()),
+            ));
         }
     }
 
@@ -392,7 +395,7 @@ fn update_from_ping_pong_action(
         );
         transition_if!(
             player,
-            Player::Grappling(moving),
+            Player::Grappling(Grappling::new(moving)),
             Player::UpJumping(UpJumping::new(moving, resources, &player.context)),
             has_grappling
         )
