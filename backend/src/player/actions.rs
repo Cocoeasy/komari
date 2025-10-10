@@ -178,6 +178,17 @@ pub struct Chat {
     pub content: String,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum Booster {
+    Vip,
+    // TODO: Hexa
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct UseBooster {
+    pub kind: Booster,
+}
+
 /// Represents an action the [`Rotator`] can use.
 #[derive(Clone, Debug, Display)]
 pub enum PlayerAction {
@@ -198,6 +209,8 @@ pub enum PlayerAction {
     Panic(Panic),
     /// Chats in-game action.
     Chat(Chat),
+    /// Use VIP or HEXA booster action.
+    UseBooster(UseBooster),
 }
 
 impl From<Action> for PlayerAction {

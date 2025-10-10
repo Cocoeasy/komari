@@ -19,11 +19,12 @@ use crate::{
     array::Array,
     buff::{Buff, BuffKind},
     database::{Action, ActionCondition, ActionKey, ActionMove, EliteBossBehavior},
+    detect::{BoosterKind, BoosterState},
     ecs::{Resources, World},
     minimap::Minimap,
     player::{
-        AutoMob, FamiliarsSwap, GRAPPLING_THRESHOLD, Key, Panic, PanicTo, PingPong,
-        PingPongDirection, PlayerAction, PlayerContext, PlayerEntity, Quadrant,
+        AutoMob, Booster, FamiliarsSwap, GRAPPLING_THRESHOLD, Key, Panic, PanicTo, PingPong,
+        PingPongDirection, PlayerAction, PlayerContext, PlayerEntity, Quadrant, UseBooster,
     },
     run::MS_PER_TICK,
     skill::{Skill, SkillKind},
@@ -131,6 +132,7 @@ pub struct RotatorBuildArgs<'a> {
     pub enable_rune_solving: bool,
     pub enable_familiars_swapping: bool,
     pub enable_reset_normal_actions_on_erda: bool,
+    pub enable_using_vip_booster: bool,
 }
 
 /// Handles rotating provided [`PlayerAction`]s.
@@ -719,6 +721,7 @@ impl Rotator for DefaultRotator {
             enable_rune_solving,
             enable_familiars_swapping,
             enable_reset_normal_actions_on_erda,
+            enable_using_vip_booster,
         } = args;
         self.reset_queue();
         self.normal_actions.clear();
@@ -804,6 +807,12 @@ impl Rotator for DefaultRotator {
             self.priority_actions.insert(
                 self.id_counter.fetch_add(1, Ordering::Relaxed),
                 panic_priority_action(),
+            );
+        }
+        if enable_using_vip_booster {
+            self.priority_actions.insert(
+                self.id_counter.fetch_add(1, Ordering::Relaxed),
+                use_booster_priority_action(BoosterKind::Vip),
             );
         }
         for (i, key) in buffs.iter().copied() {
@@ -1189,6 +1198,45 @@ fn elite_boss_use_key_priority_action(key: KeyBinding) -> PriorityAction {
 }
 
 #[inline]
+fn use_booster_priority_action(kind: BoosterKind) -> PriorityAction {
+    PriorityAction {
+        condition: Condition(Box::new(move |resources, world, last_queued_time| {
+            if !at_least_millis_passed_since(last_queued_time, COOLDOWN_BETWEEN_QUEUE_MILLIS) {
+                return ConditionResult::Skip;
+            }
+            if matches!(kind, BoosterKind::Vip)
+                && world
+                    .player
+                    .context
+                    .is_vip_booster_fail_count_limit_reached()
+            {
+                return ConditionResult::Ignore;
+            }
+
+            if let Some(detector) = resources.detector.as_ref()
+                && !detector.detect_timer_visible()
+            {
+                match detector.detect_booster(kind) {
+                    BoosterState::Available => return ConditionResult::Queue,
+                    BoosterState::Unavailable | BoosterState::NotInQuickSlots => (),
+                }
+            }
+
+            ConditionResult::Ignore
+        })),
+        condition_kind: None,
+        inner: RotatorAction::Single(PlayerAction::UseBooster(UseBooster {
+            kind: match kind {
+                BoosterKind::Vip => Booster::Vip,
+            },
+        })),
+        queue_to_front: true,
+        ignoring: false,
+        last_queued_time: None,
+    }
+}
+
+#[inline]
 fn at_least_millis_passed_since(last_queued_time: Option<Instant>, millis: u128) -> bool {
     last_queued_time
         .map(|instant| Instant::now().duration_since(instant).as_millis() >= millis)
@@ -1361,6 +1409,7 @@ mod tests {
             enable_rune_solving: true,
             enable_familiars_swapping: false,
             enable_reset_normal_actions_on_erda: false,
+            enable_using_vip_booster: false,
         };
 
         rotator.build_actions(args);

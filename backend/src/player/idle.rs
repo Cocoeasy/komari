@@ -15,7 +15,7 @@ use crate::{
     bridge::KeyKind,
     ecs::Resources,
     minimap::Minimap,
-    player::{ChattingContent, PlayerEntity, chat::Chatting},
+    player::{ChattingContent, PlayerEntity, chat::Chatting, use_booster::UsingBooster},
     rng::Rng,
     transition, transition_from_action, transition_if,
 };
@@ -199,6 +199,10 @@ fn update_from_action(resources: &Resources, player: &mut PlayerEntity, minimap_
             player,
             Player::Chatting(Chatting::new(ChattingContent::from_string(chat.content)))
         ),
+
+        Some(PlayerAction::UseBooster(using)) => {
+            transition!(player, Player::UsingBooster(UsingBooster::new(using.kind)))
+        }
 
         None => (),
     }

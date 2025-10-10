@@ -131,6 +131,19 @@ pub enum BuffKind {
     ExtremeGoldPotion,
 }
 
+#[derive(Debug)]
+pub enum BoosterState {
+    Available,
+    Unavailable,
+    NotInQuickSlots,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BoosterKind {
+    Vip,
+    // TODO: Hexa
+}
+
 /// A trait for detecting objects from provided frame.
 pub trait Detector: 'static + Send + DynClone + Debug {
     fn mat(&self) -> &OwnedMat;
@@ -260,6 +273,15 @@ pub trait Detector: 'static + Send + DynClone + Debug {
 
     /// Detects whether the chat menu is opened.
     fn detect_chat_menu_opened(&self) -> bool;
+
+    /// Detects whether the admin image is visible inside the currently opened popup/dialog.
+    fn detect_admin_visible(&self) -> bool;
+
+    /// Detects whether there is a timer (e.g. from using booster).
+    fn detect_timer_visible(&self) -> bool;
+
+    /// Detects whether the state for VIP Booster in the quick slots.
+    fn detect_booster(&self, kind: BoosterKind) -> BoosterState;
 }
 
 #[cfg(test)]
@@ -311,6 +333,9 @@ mock! {
         fn detect_familiar_essence_depleted(&self) -> bool;
         fn detect_change_channel_menu_opened(&self) -> bool;
         fn detect_chat_menu_opened(&self) -> bool;
+        fn detect_admin_visible(&self) -> bool;
+        fn detect_timer_visible(&self) -> bool;
+        fn detect_booster(&self, kind: BoosterKind) -> BoosterState;
     }
 
     impl Debug for Detector {
@@ -528,6 +553,18 @@ impl Detector for DefaultDetector {
     fn detect_chat_menu_opened(&self) -> bool {
         detect_chat_menu_opened(&**self.grayscale)
     }
+
+    fn detect_admin_visible(&self) -> bool {
+        detect_admin_visible(&**self.grayscale)
+    }
+
+    fn detect_timer_visible(&self) -> bool {
+        detect_timer_visible(&**self.grayscale)
+    }
+
+    fn detect_booster(&self, kind: BoosterKind) -> BoosterState {
+        detect_booster(&to_quick_slots_region(&**self.grayscale).0, kind)
+    }
 }
 
 fn detect_mobs(
@@ -628,8 +665,20 @@ fn detect_mobs(
     Ok(points)
 }
 
+static ESC_YES_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(include_bytes!(env!("ESC_YES_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+});
+
+static ESC_CONFIRM_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(
+        include_bytes!(env!("ESC_CONFIRM_TEMPLATE")),
+        IMREAD_GRAYSCALE,
+    )
+    .unwrap()
+});
+
 /// TODO: Support default ratio
-static ESC_SETTINGS: LazyLock<[Mat; 11]> = LazyLock::new(|| {
+static ESC_SETTINGS: LazyLock<[Mat; 12]> = LazyLock::new(|| {
     [
         imgcodecs::imdecode(
             include_bytes!(env!("ESC_SETTING_TEMPLATE")),
@@ -648,12 +697,9 @@ static ESC_SETTINGS: LazyLock<[Mat; 11]> = LazyLock::new(|| {
             IMREAD_GRAYSCALE,
         )
         .unwrap(),
+        ESC_YES_TEMPLATE.clone(),
         imgcodecs::imdecode(include_bytes!(env!("ESC_OK_TEMPLATE")), IMREAD_GRAYSCALE).unwrap(),
-        imgcodecs::imdecode(
-            include_bytes!(env!("ESC_CONFIRM_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap(),
+        ESC_CONFIRM_TEMPLATE.clone(),
         imgcodecs::imdecode(
             include_bytes!(env!("ESC_CANCEL_TEMPLATE")),
             IMREAD_GRAYSCALE,
@@ -683,7 +729,7 @@ fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
 }
 
 fn detect_esc_confirm_button(mat: &impl ToInputArray) -> Result<Rect> {
-    detect_template(mat, &ESC_SETTINGS[6], Point::default(), 0.75)
+    detect_template(mat, &*ESC_CONFIRM_TEMPLATE, Point::default(), 0.75)
 }
 
 fn detect_tomb_ok_button(mat: &impl ToInputArray) -> Result<Rect> {
@@ -800,13 +846,16 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
             // a and b have shapes [bbox(4) + class(1)]
             a[4].total_cmp(&b[4])
         })
-        .filter(|pred| pred[4] >= 0.7)
         .ok_or(anyhow!("minimap detection failed"))?;
 
     debug!(target: "minimap", "yolo detection: {pred:?}");
 
     // Extract the thresholded minimap
     let minimap_bbox = remap_from_yolo(pred, size, w_ratio, h_ratio, left, top);
+    if minimap_bbox.empty() {
+        bail!("minimap is empty");
+    }
+
     let mut minimap_thresh = to_grayscale(&mat.roi(minimap_bbox).unwrap(), true);
     unsafe {
         // SAFETY: threshold can be called in place.
@@ -1960,13 +2009,8 @@ fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
         .unwrap()
     });
 
-    let size = mat.size().unwrap();
-    // crop to bottom right of the image for skill bar
-    let crop_x = size.width / 2;
-    let crop_y = size.height / 5;
-    let crop_bbox = Rect::new(size.width - crop_x, size.height - crop_y, crop_x, crop_y);
-    let skill_bar = mat.roi(crop_bbox).unwrap();
-    detect_template(&skill_bar, &*ERDA_SHOWER, crop_bbox.tl(), 0.8)
+    let (quick_slots, crop_bbox) = to_quick_slots_region(mat);
+    detect_template(&quick_slots, &*ERDA_SHOWER, crop_bbox.tl(), 0.8)
 }
 
 fn detect_familiar_save_button(mat: &impl ToInputArray) -> Result<Rect> {
@@ -2213,6 +2257,79 @@ fn detect_chat_menu_opened(mat: &impl ToInputArray) -> bool {
     });
 
     detect_template(mat, &*TEMPLATE, Point::default(), 0.75).is_ok()
+}
+
+fn detect_admin_visible(mat: &impl ToInputArray) -> bool {
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("ADMIN_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+
+    detect_template(mat, &*TEMPLATE, Point::default(), 0.75).is_ok()
+}
+
+fn detect_timer_visible(mat: &impl ToInputArray) -> bool {
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(include_bytes!(env!("TIMER_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+    });
+
+    detect_template(mat, &*TEMPLATE, Point::default(), 0.75).is_ok()
+}
+
+fn detect_booster<T: MatTraitConst + ToInputArray>(mat: &T, kind: BoosterKind) -> BoosterState {
+    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("VIP_BOOSTER_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static TEMPLATE_NUMBER: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("VIP_BOOSTER_NUMBER_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static TEMPLATE_NUMBER_MASK: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("VIP_BOOSTER_NUMBER_MASK_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+
+    let (template, template_number, template_number_mask) = match kind {
+        BoosterKind::Vip => (&*TEMPLATE, &*TEMPLATE_NUMBER, &*TEMPLATE_NUMBER_MASK),
+    };
+    let pad_height = template_number.size().unwrap().height;
+    let Ok(booster_bbox) = detect_template(mat, template, Point::default(), 0.75).map(|bbox| {
+        let br = bbox.br();
+
+        let x1 = bbox.x - 1;
+        let x2 = br.x + 1;
+
+        let y1 = bbox.y;
+        let y2 = br.y + pad_height;
+
+        Rect::new(x1, y1, x2 - x1, y2 - y1)
+    }) else {
+        return BoosterState::NotInQuickSlots;
+    };
+    let booster = mat.roi(booster_bbox).expect("can extract roi");
+    let has_booster = detect_template_single(
+        &booster,
+        template_number,
+        template_number_mask,
+        Point::default(),
+        0.8,
+    )
+    .is_err();
+
+    if has_booster {
+        BoosterState::Available
+    } else {
+        BoosterState::Unavailable
+    }
 }
 
 /// Detects a single match from `template` with the given BGR image `Mat`.
@@ -2726,6 +2843,17 @@ fn to_buffs_region(mat: &impl MatTraitConst) -> BoxedRef<'_, Mat> {
     let crop_y = size.height / 4;
     let crop_bbox = Rect::new(size.width - crop_x, 0, crop_x, crop_y);
     mat.roi(crop_bbox).unwrap()
+}
+
+/// Crops `mat` to the bottom right of the image for quick slots region.
+#[inline]
+fn to_quick_slots_region(mat: &impl MatTraitConst) -> (BoxedRef<'_, Mat>, Rect) {
+    let size = mat.size().unwrap();
+    let crop_x = size.width / 2;
+    let crop_y = size.height / 5;
+    let crop_bbox = Rect::new(size.width - crop_x, size.height - crop_y, crop_x, crop_y);
+    let crop_roi = mat.roi(crop_bbox).unwrap();
+    (crop_roi, crop_bbox)
 }
 
 /// Converts a BGRA `Mat` image to HSV.

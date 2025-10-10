@@ -347,6 +347,8 @@ pub struct Character {
     pub extreme_blue_potion_key: KeyBindingConfiguration,
     pub extreme_green_potion_key: KeyBindingConfiguration,
     pub extreme_gold_potion_key: KeyBindingConfiguration,
+    #[serde(default)]
+    pub vip_booster_key: KeyBindingConfiguration,
     pub class: Class,
     #[serde(default)]
     pub disable_double_jumping: bool,
@@ -424,6 +426,7 @@ impl Default for Character {
             extreme_blue_potion_key: KeyBindingConfiguration::default(),
             extreme_green_potion_key: KeyBindingConfiguration::default(),
             extreme_gold_potion_key: KeyBindingConfiguration::default(),
+            vip_booster_key: KeyBindingConfiguration::default(),
             class: Class::default(),
             disable_double_jumping: false,
             disable_adjusting: false,
@@ -1048,7 +1051,7 @@ pub fn upsert_character(character: &mut Character) -> Result<()> {
 
 pub fn delete_character(character: &Character) -> Result<()> {
     delete_from_table(CHARACTERS, character).inspect(|_| {
-        let _ = EVENT.send(DatabaseEvent::MinimapDeleted(
+        let _ = EVENT.send(DatabaseEvent::CharacterDeleted(
             character.id.expect("valid id if deleted"),
         ));
     })

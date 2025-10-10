@@ -12,6 +12,7 @@ fn main() {
     let esc_event = dir.join("esc_event_ideal_ratio.png");
     let esc_community = dir.join("esc_community_ideal_ratio.png");
     let esc_character = dir.join("esc_character_ideal_ratio.png");
+    let esc_yes = dir.join("esc_yes_ideal_ratio.png");
     let esc_ok = dir.join("esc_ok_ideal_ratio.png");
     let esc_confirm = dir.join("esc_confirm_ideal_ratio.png");
     let esc_cancel = dir.join("esc_cancel_ideal_ratio.png");
@@ -39,6 +40,8 @@ fn main() {
     let portal = dir.join("portal_ideal_ratio.png");
     let change_channel_menu = dir.join("change_channel_menu_ideal_ratio.png");
     let chat_menu = dir.join("chat_menu_ideal_ratio.png");
+    let admin = dir.join("admin_ideal_ratio.png");
+    let timer = dir.join("timer_ideal_ratio.png");
 
     let rune = dir.join("rune_ideal_ratio.png");
     let rune_mask = dir.join("rune_mask_ideal_ratio.png");
@@ -75,6 +78,10 @@ fn main() {
     let extreme_blue_potion_buff = dir.join("extreme_blue_potion_ideal_ratio.png");
     let extreme_green_potion_buff = dir.join("extreme_green_potion_ideal_ratio.png");
     let extreme_gold_potion_buff = dir.join("extreme_gold_potion_ideal_ratio.png");
+
+    let vip_booster = dir.join("vip_booster_ideal_ratio.png");
+    let vip_booster_number = dir.join("vip_booster_number_ideal_ratio.png");
+    let vip_booster_number_mask = dir.join("vip_booster_number_mask_ideal_ratio.png");
 
     let hp_bar_anchor = dir.join("hp_bar_anchor_ideal_ratio.png");
     let hp_separator = dir.join("hp_separator_ideal_ratio.png");
@@ -129,6 +136,10 @@ fn main() {
     println!(
         "cargo:rustc-env=ESC_CHARACTER_TEMPLATE={}",
         esc_character.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=ESC_YES_TEMPLATE={}",
+        esc_yes.to_str().unwrap()
     );
     println!(
         "cargo:rustc-env=ESC_OK_TEMPLATE={}",
@@ -223,6 +234,8 @@ fn main() {
         "cargo:rustc-env=CHAT_MENU_TEMPLATE={}",
         chat_menu.to_str().unwrap()
     );
+    println!("cargo:rustc-env=TIMER_TEMPLATE={}", timer.to_str().unwrap());
+    println!("cargo:rustc-env=ADMIN_TEMPLATE={}", admin.to_str().unwrap());
 
     println!("cargo:rustc-env=RUNE_TEMPLATE={}", rune.to_str().unwrap());
     println!(
@@ -338,6 +351,19 @@ fn main() {
     println!(
         "cargo:rustc-env=EXTREME_GOLD_POTION_BUFF_TEMPLATE={}",
         extreme_gold_potion_buff.to_str().unwrap()
+    );
+
+    println!(
+        "cargo:rustc-env=VIP_BOOSTER_TEMPLATE={}",
+        vip_booster.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=VIP_BOOSTER_NUMBER_TEMPLATE={}",
+        vip_booster_number.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=VIP_BOOSTER_NUMBER_MASK_TEMPLATE={}",
+        vip_booster_number_mask.to_str().unwrap()
     );
 
     println!(
