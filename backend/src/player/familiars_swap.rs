@@ -944,7 +944,7 @@ mod tests {
 
         let mut detector = MockDetector::default();
         detector
-            .expect_detect_esc_confirm_button()
+            .expect_detect_popup_confirm_button()
             .once()
             .returning(|| Ok(Default::default()));
 
