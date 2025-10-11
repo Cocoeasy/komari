@@ -690,11 +690,11 @@ mod tests {
             TaskType::Rune => context
                 .rune_task
                 .as_ref()
-                .map_or(false, |task| task.completed()),
+                .is_some_and(|task| task.completed()),
             TaskType::Minimap => context
                 .minimap_task
                 .as_ref()
-                .map_or(false, |task| task.completed()),
+                .is_some_and(|task| task.completed()),
         };
         while !completed(&minimap.context) {
             run_system(resources, minimap, Player::Idle);

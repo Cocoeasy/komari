@@ -11,7 +11,7 @@ use tokio::{
 
 use crate::{
     BoundQuadrant, Character, DatabaseEvent, GameOperation, GameState, KeyBinding,
-    KeyBindingConfiguration, Minimap, Settings,
+    KeyBindingConfiguration, Localization, Minimap, Settings,
     bridge::InputReceiver,
     database_event_receiver,
     ecs::{Resources, World},
@@ -27,6 +27,7 @@ pub enum GameEvent {
     MinimapUpdated(Option<Minimap>),
     CharacterUpdated(Option<Character>),
     SettingsUpdated(Settings),
+    LocalizationUpdated(Localization),
     NavigationPathsUpdated,
 }
 
@@ -265,6 +266,9 @@ fn poll_database(
         }
         DatabaseEvent::SettingsUpdated(settings) => {
             return Some(GameEvent::SettingsUpdated(settings));
+        }
+        DatabaseEvent::LocalizationUpdated(localization) => {
+            return Some(GameEvent::LocalizationUpdated(localization));
         }
         DatabaseEvent::CharacterUpdated(character) => {
             let updated_id = character

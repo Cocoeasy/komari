@@ -1561,7 +1561,7 @@ mod tests {
         idle.platforms = Array::from_iter(find_neighbors(&platforms, 25, 7, 41));
         idle.bbox = bbox;
 
-        let rng = Rng::new(SEED);
+        let rng = Rng::new(SEED, 1337);
         let mut resources = Resources::new(None, None);
         resources.rng = rng;
 
@@ -1585,7 +1585,7 @@ mod tests {
         let mut idle = MinimapIdle::default();
         idle.bbox = bbox;
 
-        let rng = Rng::new(SEED);
+        let rng = Rng::new(SEED, 1337);
         let mut resources = Resources::new(None, None);
         resources.rng = rng;
 

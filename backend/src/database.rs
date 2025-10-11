@@ -12,14 +12,15 @@ use serde_json::Value;
 use strum::{Display, EnumIter, EnumString};
 use tokio::sync::broadcast::{Receiver, Sender, channel};
 
-use crate::bridge::KeyKind;
 use crate::pathing;
+use crate::{bridge::KeyKind, models::Localization};
 
 const MAPS: &str = "maps";
 const NAVIGATION_PATHS: &str = "navigation_paths";
 const CHARACTERS: &str = "characters";
 const SETTINGS: &str = "settings";
 const SEEDS: &str = "seeds";
+const LOCALIZATIONS: &str = "localizations";
 
 static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
     let path = env::current_exe()
@@ -30,28 +31,35 @@ static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
         .to_path_buf();
     let conn = Connection::open(path.to_str().unwrap()).expect("failed to open local.db");
     conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS maps (
-            id INTEGER PRIMARY KEY,
-            data TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS navigation_paths (
-            id INTEGER PRIMARY KEY,
-            data TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS characters (
-            id INTEGER PRIMARY KEY,
-            data TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS settings (
-            id INTEGER PRIMARY KEY,
-            data TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS seeds (
-            id INTEGER PRIMARY KEY,
-            data TEXT NOT NULL
-        );
-        "#,
+        format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {MAPS} (
+                id INTEGER PRIMARY KEY,
+                data TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS {NAVIGATION_PATHS} (
+                id INTEGER PRIMARY KEY,
+                data TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS {CHARACTERS} (
+                id INTEGER PRIMARY KEY,
+                data TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS {SETTINGS} (
+                id INTEGER PRIMARY KEY,
+                data TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS {SEEDS} (
+                id INTEGER PRIMARY KEY,
+                data TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS {LOCALIZATIONS} (
+                id INTEGER PRIMARY KEY,
+                data TEXT NOT NULL
+            );
+            "#
+        )
+        .as_str(),
     )
     .unwrap();
     Mutex::new(conn)
@@ -65,19 +73,21 @@ pub enum DatabaseEvent {
     NavigationPathsUpdated,
     NavigationPathsDeleted,
     SettingsUpdated(Settings),
+    LocalizationUpdated(Localization),
     CharacterUpdated(Character),
     CharacterDeleted(i64),
 }
 
-trait Identifiable {
+pub trait Identifiable {
     fn id(&self) -> Option<i64>;
 
     fn set_id(&mut self, id: i64);
 }
 
+#[macro_export]
 macro_rules! impl_identifiable {
     ($type:ty) => {
-        impl Identifiable for $type {
+        impl $crate::database::Identifiable for $type {
             fn id(&self) -> Option<i64> {
                 self.id
             }
@@ -91,20 +101,29 @@ macro_rules! impl_identifiable {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Seeds {
+    #[serde(skip_serializing, default)]
     pub id: Option<i64>,
-    pub seed: [u8; 32],
+    #[serde(alias = "seed")]
+    pub rng_seed: [u8; 32],
+    #[serde(default = "perlin_seed_default")]
+    pub perlin_seed: u32,
 }
 
 impl Default for Seeds {
     fn default() -> Self {
         Self {
             id: None,
-            seed: rand::random(),
+            rng_seed: rand::random(),
+            perlin_seed: perlin_seed_default(),
         }
     }
 }
 
 impl_identifiable!(Seeds);
+
+fn perlin_seed_default() -> u32 {
+    rand::random()
+}
 
 #[derive(
     Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumIter, Display, EnumString,
@@ -1009,16 +1028,32 @@ pub fn database_event_receiver() -> Receiver<DatabaseEvent> {
     EVENT.subscribe()
 }
 
-pub fn query_seeds() -> Seeds {
+pub fn query_and_upsert_seeds() -> Seeds {
     let mut seeds = query_from_table::<Seeds>(SEEDS)
         .unwrap()
         .into_iter()
         .next()
         .unwrap_or_default();
-    if seeds.id.is_none() {
-        upsert_to_table(SEEDS, &mut seeds).unwrap();
-    }
+    upsert_to_table(SEEDS, &mut seeds).unwrap();
     seeds
+}
+
+pub fn query_or_upsert_localization() -> Localization {
+    let mut localization = query_from_table::<Localization>(LOCALIZATIONS)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    if localization.id.is_none() {
+        upsert_to_table(LOCALIZATIONS, &mut localization).unwrap();
+    }
+    localization
+}
+
+pub fn upsert_localization(localization: &mut Localization) -> Result<()> {
+    upsert_to_table(LOCALIZATIONS, localization).inspect(|_| {
+        let _ = EVENT.send(DatabaseEvent::LocalizationUpdated(localization.clone()));
+    })
 }
 
 pub fn query_settings() -> Settings {

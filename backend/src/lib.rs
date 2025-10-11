@@ -33,6 +33,7 @@ mod detect;
 mod ecs;
 mod mat;
 mod minimap;
+mod models;
 mod navigator;
 mod notification;
 mod operation;
@@ -55,6 +56,7 @@ pub use {
         NavigationPaths, NavigationPoint, NavigationTransition, Notifications, Platform, Position,
         PotionMode, RotationMode, Settings, SwappableFamiliars, database_event_receiver,
     },
+    models::*,
     pathing::MAX_PLATFORMS_COUNT,
     rotator::RotatorMode,
     run::init,
@@ -113,6 +115,8 @@ enum Request {
     RefreshCaptureHandles,
     QueryCaptureHandles,
     SelectCaptureHandle(Option<usize>),
+    QueryTemplate(GameTemplate),
+    ConvertImageToBase64(Vec<u8>, bool),
     #[cfg(debug_assertions)]
     DebugStateReceiver,
     #[cfg(debug_assertions)]
@@ -148,6 +152,8 @@ enum Response {
     RefreshCaptureHandles,
     QueryCaptureHandles((Vec<String>, Option<usize>)),
     SelectCaptureHandle,
+    QueryTemplate(String),
+    ConvertImageToBase64(Option<String>),
     #[cfg(debug_assertions)]
     DebugStateReceiver(broadcast::Receiver<DebugState>),
     #[cfg(debug_assertions)]
@@ -192,6 +198,10 @@ pub(crate) trait RequestHandler {
 
     fn on_select_capture_handle(&mut self, index: Option<usize>);
 
+    fn on_query_template(&self, template: GameTemplate) -> String;
+
+    fn on_convert_image_to_base64(&self, image: Vec<u8>, is_grayscale: bool) -> Option<String>;
+
     #[cfg(debug_assertions)]
     fn on_debug_state_receiver(&self) -> broadcast::Receiver<DebugState>;
 
@@ -212,6 +222,24 @@ pub(crate) trait RequestHandler {
 
     #[cfg(debug_assertions)]
     fn on_test_spin_rune(&self);
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum GameTemplate {
+    CashShop,
+    ChangeChannel,
+    Timer,
+    PopupConfirm,
+    PopupYes,
+    PopupNext,
+    PopupEndChat,
+    PopupOkNew,
+    PopupOkOld,
+    PopupCancelNew,
+    PopupCancelOld,
+    FamiliarsLevelSort,
+    FamiliarsSaveButton,
+    FamiliarsSetupButton,
 }
 
 /// The four quads of a bound.
@@ -267,6 +295,25 @@ pub enum RotateKind {
 /// Starts or stops rotating the actions.
 pub async fn rotate_actions(kind: RotateKind) {
     send_request!(RotateActions(kind))
+}
+
+/// Queries localization from the database.
+pub async fn query_localization() -> Localization {
+    spawn_blocking(database::query_or_upsert_localization)
+        .await
+        .unwrap()
+}
+
+/// Upserts `localization` to the database.
+///
+/// Returns the updated [`Localization`] or original if fails.
+pub async fn upsert_localization(mut localization: Localization) -> Localization {
+    spawn_blocking(move || {
+        let _ = database::upsert_localization(&mut localization);
+        localization
+    })
+    .await
+    .unwrap()
 }
 
 /// Queries settings from the database.
@@ -439,6 +486,14 @@ pub async fn select_capture_handle(index: Option<usize>) {
     send_request!(SelectCaptureHandle(index))
 }
 
+pub async fn query_template(template: GameTemplate) -> String {
+    send_request!(QueryTemplate(template) => (base64))
+}
+
+pub async fn convert_image_to_base64(image: Vec<u8>, is_grayscale: bool) -> Option<String> {
+    send_request!(ConvertImageToBase64(image, is_grayscale) => (base64))
+}
+
 #[cfg(debug_assertions)]
 pub async fn debug_state_receiver() -> broadcast::Receiver<DebugState> {
     send_request!(DebugStateReceiver => (receiver))
@@ -522,6 +577,12 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
                 handler.on_select_capture_handle(index);
                 Response::SelectCaptureHandle
             }
+            Request::QueryTemplate(template) => {
+                Response::QueryTemplate(handler.on_query_template(template))
+            }
+            Request::ConvertImageToBase64(image, is_grayscale) => Response::ConvertImageToBase64(
+                handler.on_convert_image_to_base64(image, is_grayscale),
+            ),
             #[cfg(debug_assertions)]
             Request::DebugStateReceiver => {
                 Response::DebugStateReceiver(handler.on_debug_state_receiver())

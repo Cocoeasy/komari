@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow, bail};
+use base64::{Engine, prelude::BASE64_STANDARD};
 use dyn_clone::DynClone;
 use log::{debug, error, info};
 #[cfg(test)]
@@ -24,7 +25,7 @@ use opencv::{
         ModelTrait, TextRecognitionModel, TextRecognitionModelTrait,
         TextRecognitionModelTraitConst, read_net_from_onnx_buffer,
     },
-    imgcodecs::{self, IMREAD_COLOR, IMREAD_GRAYSCALE},
+    imgcodecs::{self, IMREAD_COLOR, IMREAD_GRAYSCALE, imdecode, imencode_def},
     imgproc::{
         CC_STAT_AREA, CC_STAT_HEIGHT, CC_STAT_LEFT, CC_STAT_TOP, CC_STAT_WIDTH,
         CHAIN_APPROX_SIMPLE, COLOR_BGR2HSV_FULL, COLOR_BGRA2BGR, COLOR_BGRA2GRAY, COLOR_BGRA2RGB,
@@ -40,10 +41,10 @@ use ort::{
     value::TensorRef,
 };
 
-use crate::bridge::KeyKind;
 #[cfg(debug_assertions)]
 use crate::debug::{debug_mat, debug_spinning_arrows};
 use crate::{array::Array, mat::OwnedMat};
+use crate::{bridge::KeyKind, models::Localization};
 
 const MAX_ARROWS: usize = 4;
 const MAX_SPIN_ARROWS: usize = 2; // PRAY
@@ -355,10 +356,11 @@ pub struct DefaultDetector {
     mat: Arc<OwnedMat>,
     grayscale: Arc<LazyLock<Mat, MatFn>>,
     buffs_grayscale: Arc<LazyLock<Mat, MatFn>>,
+    localization: Arc<Localization>,
 }
 
 impl DefaultDetector {
-    pub fn new(mat: OwnedMat) -> DefaultDetector {
+    pub fn new(mat: OwnedMat, localization: Arc<Localization>) -> DefaultDetector {
         let mat = Arc::new(mat);
         let grayscale = mat.clone();
         let grayscale = Arc::new(LazyLock::<Mat, MatFn>::new(Box::new(move || {
@@ -372,6 +374,7 @@ impl DefaultDetector {
             mat,
             grayscale,
             buffs_grayscale,
+            localization,
         }
     }
 }
@@ -390,15 +393,15 @@ impl Detector for DefaultDetector {
     }
 
     fn detect_esc_settings(&self) -> bool {
-        detect_esc_settings(&**self.grayscale)
+        detect_esc_settings(&**self.grayscale, &self.localization)
     }
 
     fn detect_popup_confirm_button(&self) -> Result<Rect> {
-        detect_popup_confirm_button(&**self.grayscale)
+        detect_popup_confirm_button(&**self.grayscale, &self.localization)
     }
 
     fn detect_popup_ok_new_button(&self) -> Result<Rect> {
-        detect_popup_ok_new_button(&**self.grayscale)
+        detect_popup_ok_new_button(&**self.grayscale, &self.localization)
     }
 
     fn detect_elite_boss_bar(&self) -> bool {
@@ -457,7 +460,7 @@ impl Detector for DefaultDetector {
     }
 
     fn detect_player_in_cash_shop(&self) -> bool {
-        detect_player_in_cash_shop(&**self.grayscale)
+        detect_player_in_cash_shop(&**self.grayscale, &self.localization)
     }
 
     fn detect_player_health_bar(&self) -> Result<Rect> {
@@ -507,15 +510,15 @@ impl Detector for DefaultDetector {
     }
 
     fn detect_familiar_save_button(&self) -> Result<Rect> {
-        detect_familiar_save_button(&to_bgr(&*self.mat))
+        detect_familiar_save_button(&to_bgr(&*self.mat), &self.localization)
     }
 
     fn detect_familiar_setup_button(&self) -> Result<Rect> {
-        detect_familiar_setup_button(&to_bgr(&*self.mat))
+        detect_familiar_setup_button(&to_bgr(&*self.mat), &self.localization)
     }
 
     fn detect_familiar_level_button(&self) -> Result<Rect> {
-        detect_familiar_level_button(&to_bgr(&*self.mat))
+        detect_familiar_level_button(&to_bgr(&*self.mat), &self.localization)
     }
 
     fn detect_familiar_slots(&self) -> Vec<(Rect, bool)> {
@@ -547,7 +550,7 @@ impl Detector for DefaultDetector {
     }
 
     fn detect_change_channel_menu_opened(&self) -> bool {
-        detect_change_channel_menu_opened(&**self.grayscale)
+        detect_change_channel_menu_opened(&**self.grayscale, &self.localization)
     }
 
     fn detect_chat_menu_opened(&self) -> bool {
@@ -559,7 +562,7 @@ impl Detector for DefaultDetector {
     }
 
     fn detect_timer_visible(&self) -> bool {
-        detect_timer_visible(&**self.grayscale)
+        detect_timer_visible(&**self.grayscale, &self.localization)
     }
 
     fn detect_booster(&self, kind: BoosterKind) -> BoosterState {
@@ -665,15 +668,7 @@ fn detect_mobs(
     Ok(points)
 }
 
-static POPUP_OK_NEW_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
-    imgcodecs::imdecode(
-        include_bytes!(env!("POPUP_OK_NEW_TEMPLATE")),
-        IMREAD_GRAYSCALE,
-    )
-    .unwrap()
-});
-
-static POPUP_CONFIRM_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+pub static POPUP_CONFIRM_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
     imgcodecs::imdecode(
         include_bytes!(env!("POPUP_CONFIRM_TEMPLATE")),
         IMREAD_GRAYSCALE,
@@ -681,60 +676,226 @@ static POPUP_CONFIRM_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
     .unwrap()
 });
 
-/// TODO: Support default ratio
-static ESC_TEMPLATES: LazyLock<[Mat; 9]> = LazyLock::new(|| {
-    [
+pub static POPUP_YES_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(include_bytes!(env!("POPUP_YES_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+});
+
+pub static POPUP_NEXT_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(
+        include_bytes!(env!("POPUP_NEXT_TEMPLATE")),
+        IMREAD_GRAYSCALE,
+    )
+    .unwrap()
+});
+
+pub static POPUP_END_CHAT_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(
+        include_bytes!(env!("POPUP_END_CHAT_TEMPLATE")),
+        IMREAD_GRAYSCALE,
+    )
+    .unwrap()
+});
+
+pub static POPUP_OK_NEW_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(
+        include_bytes!(env!("POPUP_OK_NEW_TEMPLATE")),
+        IMREAD_GRAYSCALE,
+    )
+    .unwrap()
+});
+
+pub static POPUP_OK_OLD_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(
+        include_bytes!(env!("POPUP_OK_OLD_TEMPLATE")),
+        IMREAD_GRAYSCALE,
+    )
+    .unwrap()
+});
+
+pub static POPUP_CANCEL_NEW_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(
+        include_bytes!(env!("POPUP_CANCEL_NEW_TEMPLATE")),
+        IMREAD_GRAYSCALE,
+    )
+    .unwrap()
+});
+
+pub static POPUP_CANCEL_OLD_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(
+        include_bytes!(env!("POPUP_CANCEL_OLD_TEMPLATE")),
+        IMREAD_GRAYSCALE,
+    )
+    .unwrap()
+});
+
+fn detect_esc_settings(mat: &impl ToInputArray, localization: &Localization) -> bool {
+    static ESC_MENU_X_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("ESC_MENU_X_TEMPLATE")),
             IMREAD_GRAYSCALE,
         )
-        .unwrap(),
-        imgcodecs::imdecode(include_bytes!(env!("POPUP_YES_TEMPLATE")), IMREAD_GRAYSCALE).unwrap(),
-        imgcodecs::imdecode(
-            include_bytes!(env!("POPUP_OK_OLD_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap(),
-        POPUP_OK_NEW_TEMPLATE.clone(),
-        POPUP_CONFIRM_TEMPLATE.clone(),
-        imgcodecs::imdecode(
-            include_bytes!(env!("POPUP_CANCEL_OLD_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap(),
-        imgcodecs::imdecode(
-            include_bytes!(env!("POPUP_CANCEL_NEW_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap(),
-        imgcodecs::imdecode(
-            include_bytes!(env!("POPUP_END_CHAT_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap(),
-        imgcodecs::imdecode(
-            include_bytes!(env!("POPUP_NEXT_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap(),
-    ]
-});
+        .unwrap()
+    });
 
-fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
-    for template in &*ESC_TEMPLATES {
-        if detect_template(mat, template, Point::default(), 0.75).is_ok() {
-            return true;
-        }
+    if detect_template(mat, &*ESC_MENU_X_TEMPLATE, Point::default(), 0.75).is_ok() {
+        return true;
     }
+    if detect_popup_confirm_button(mat, localization).is_ok() {
+        return true;
+    }
+    if detect_popup_yes_button(mat, localization).is_ok() {
+        return true;
+    }
+    if detect_popup_next_button(mat, localization).is_ok() {
+        return true;
+    }
+    if detect_popup_end_chat_button(mat, localization).is_ok() {
+        return true;
+    }
+    if detect_popup_ok_new_button(mat, localization).is_ok() {
+        return true;
+    }
+    if detect_popup_ok_old_button(mat, localization).is_ok() {
+        return true;
+    }
+    if detect_popup_cancel_new_button(mat, localization).is_ok() {
+        return true;
+    }
+    if detect_popup_cancel_old_button(mat, localization).is_ok() {
+        return true;
+    }
+
     false
 }
 
-fn detect_popup_confirm_button(mat: &impl ToInputArray) -> Result<Rect> {
-    detect_template(mat, &*POPUP_CONFIRM_TEMPLATE, Point::default(), 0.75)
+fn detect_popup_confirm_button(
+    mat: &impl ToInputArray,
+    localization: &Localization,
+) -> Result<Rect> {
+    let template = localization
+        .popup_confirm_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, true).ok());
+
+    detect_template(
+        mat,
+        template.as_ref().unwrap_or(&*POPUP_CONFIRM_TEMPLATE),
+        Point::default(),
+        0.75,
+    )
 }
 
-fn detect_popup_ok_new_button(mat: &impl ToInputArray) -> Result<Rect> {
-    detect_template(mat, &*POPUP_OK_NEW_TEMPLATE, Point::default(), 0.75)
+fn detect_popup_yes_button(mat: &impl ToInputArray, localization: &Localization) -> Result<Rect> {
+    let template = localization
+        .popup_yes_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, true).ok());
+
+    detect_template(
+        mat,
+        template.as_ref().unwrap_or(&*POPUP_YES_TEMPLATE),
+        Point::default(),
+        0.75,
+    )
+}
+
+fn detect_popup_next_button(mat: &impl ToInputArray, localization: &Localization) -> Result<Rect> {
+    let template = localization
+        .popup_next_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, true).ok());
+
+    detect_template(
+        mat,
+        template.as_ref().unwrap_or(&*POPUP_NEXT_TEMPLATE),
+        Point::default(),
+        0.75,
+    )
+}
+
+fn detect_popup_end_chat_button(
+    mat: &impl ToInputArray,
+    localization: &Localization,
+) -> Result<Rect> {
+    let template = localization
+        .popup_end_chat_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, true).ok());
+
+    detect_template(
+        mat,
+        template.as_ref().unwrap_or(&*POPUP_END_CHAT_TEMPLATE),
+        Point::default(),
+        0.75,
+    )
+}
+
+fn detect_popup_ok_new_button(
+    mat: &impl ToInputArray,
+    localization: &Localization,
+) -> Result<Rect> {
+    let template = localization
+        .popup_ok_new_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, true).ok());
+
+    detect_template(
+        mat,
+        template.as_ref().unwrap_or(&*POPUP_OK_NEW_TEMPLATE),
+        Point::default(),
+        0.75,
+    )
+}
+
+fn detect_popup_ok_old_button(
+    mat: &impl ToInputArray,
+    localization: &Localization,
+) -> Result<Rect> {
+    let template = localization
+        .popup_ok_old_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, true).ok());
+
+    detect_template(
+        mat,
+        template.as_ref().unwrap_or(&*POPUP_OK_OLD_TEMPLATE),
+        Point::default(),
+        0.75,
+    )
+}
+
+fn detect_popup_cancel_new_button(
+    mat: &impl ToInputArray,
+    localization: &Localization,
+) -> Result<Rect> {
+    let template = localization
+        .popup_cancel_new_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, true).ok());
+
+    detect_template(
+        mat,
+        template.as_ref().unwrap_or(&*POPUP_CANCEL_NEW_TEMPLATE),
+        Point::default(),
+        0.75,
+    )
+}
+
+fn detect_popup_cancel_old_button(
+    mat: &impl ToInputArray,
+    localization: &Localization,
+) -> Result<Rect> {
+    let template = localization
+        .popup_cancel_old_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, true).ok());
+
+    detect_template(
+        mat,
+        template.as_ref().unwrap_or(&*POPUP_CANCEL_OLD_TEMPLATE),
+        Point::default(),
+        0.75,
+    )
 }
 
 fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {
@@ -1154,13 +1315,24 @@ fn detect_player_is_dead(mat: &impl ToInputArray) -> bool {
     detect_template(mat, &*TEMPLATE, Point::default(), 0.8).is_ok()
 }
 
-fn detect_player_in_cash_shop(mat: &impl ToInputArray) -> bool {
-    /// TODO: Support default ratio
-    static CASH_SHOP: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(include_bytes!(env!("CASH_SHOP_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
-    });
+// TODO: Support default ratio
+pub static CASH_SHOP_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(include_bytes!(env!("CASH_SHOP_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+});
 
-    detect_template(mat, &*CASH_SHOP, Point::default(), 0.7).is_ok()
+fn detect_player_in_cash_shop(mat: &impl ToInputArray, localization: &Localization) -> bool {
+    let template = localization
+        .cash_shop_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, true).ok());
+
+    detect_template(
+        mat,
+        template.as_ref().unwrap_or(&*CASH_SHOP_TEMPLATE),
+        Point::default(),
+        0.7,
+    )
+    .is_ok()
 }
 
 fn detect_player_health_bar<T: MatTraitConst + ToInputArray>(mat: &T) -> Result<Rect> {
@@ -2006,40 +2178,83 @@ fn detect_erda_shower(mat: &impl MatTraitConst) -> Result<Rect> {
     detect_template(&quick_slots, &*ERDA_SHOWER, crop_bbox.tl(), 0.8)
 }
 
-fn detect_familiar_save_button(mat: &impl ToInputArray) -> Result<Rect> {
-    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("FAMILIAR_BUTTON_SAVE_TEMPLATE")),
-            IMREAD_COLOR,
-        )
-        .unwrap()
-    });
+pub static FAMILIAR_SAVE_BUTTON_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(
+        include_bytes!(env!("FAMILIAR_BUTTON_SAVE_TEMPLATE")),
+        IMREAD_COLOR,
+    )
+    .unwrap()
+});
 
-    detect_template(mat, &*TEMPLATE, Point::default(), 0.75)
+fn detect_familiar_save_button(
+    mat: &impl ToInputArray,
+    localization: &Localization,
+) -> Result<Rect> {
+    let template = localization
+        .familiar_save_button_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, false).ok());
+
+    detect_template(
+        mat,
+        template.as_ref().unwrap_or(&*FAMILIAR_SAVE_BUTTON_TEMPLATE),
+        Point::default(),
+        0.75,
+    )
 }
 
-fn detect_familiar_setup_button(mat: &impl ToInputArray) -> Result<Rect> {
-    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("FAMILIAR_BUTTON_SETUP_TEMPLATE")),
-            IMREAD_COLOR,
-        )
-        .unwrap()
-    });
+pub static FAMILIAR_SETUP_BUTTON_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(
+        include_bytes!(env!("FAMILIAR_BUTTON_SETUP_TEMPLATE")),
+        IMREAD_COLOR,
+    )
+    .unwrap()
+});
 
-    detect_template(mat, &*TEMPLATE, Point::default(), 0.75)
+fn detect_familiar_setup_button(
+    mat: &impl ToInputArray,
+    localization: &Localization,
+) -> Result<Rect> {
+    let template = localization
+        .familiar_setup_button_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, false).ok());
+
+    detect_template(
+        mat,
+        template
+            .as_ref()
+            .unwrap_or(&*FAMILIAR_SETUP_BUTTON_TEMPLATE),
+        Point::default(),
+        0.75,
+    )
 }
 
-fn detect_familiar_level_button(mat: &impl ToInputArray) -> Result<Rect> {
-    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("FAMILIAR_BUTTON_LEVEL_TEMPLATE")),
-            IMREAD_COLOR,
-        )
-        .unwrap()
-    });
+pub static FAMILIAR_LEVEL_BUTTON_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(
+        include_bytes!(env!("FAMILIAR_BUTTON_LEVEL_TEMPLATE")),
+        IMREAD_COLOR,
+    )
+    .unwrap()
+});
 
-    detect_template(mat, &*TEMPLATE, Point::default(), 0.75)
+fn detect_familiar_level_button(
+    mat: &impl ToInputArray,
+    localization: &Localization,
+) -> Result<Rect> {
+    let template = localization
+        .familiar_level_button_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, false).ok());
+
+    detect_template(
+        mat,
+        template
+            .as_ref()
+            .unwrap_or(&*FAMILIAR_LEVEL_BUTTON_TEMPLATE),
+        Point::default(),
+        0.75,
+    )
 }
 
 static FAMILIAR_SLOT_FREE: LazyLock<Mat> = LazyLock::new(|| {
@@ -2232,16 +2447,27 @@ fn detect_familiar_essence_depleted(mat: &impl ToInputArray) -> bool {
     detect_template(mat, &*TEMPLATE, Point::default(), 0.8).is_ok()
 }
 
-fn detect_change_channel_menu_opened(mat: &impl ToInputArray) -> bool {
-    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("CHANGE_CHANNEL_MENU_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
+pub static CHANGE_CHANNEL_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(
+        include_bytes!(env!("CHANGE_CHANNEL_MENU_TEMPLATE")),
+        IMREAD_GRAYSCALE,
+    )
+    .unwrap()
+});
 
-    detect_template(mat, &*TEMPLATE, Point::default(), 0.75).is_ok()
+fn detect_change_channel_menu_opened(mat: &impl ToInputArray, localization: &Localization) -> bool {
+    let template = localization
+        .change_channel_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, true).ok());
+
+    detect_template(
+        mat,
+        template.as_ref().unwrap_or(&*CHANGE_CHANNEL_TEMPLATE),
+        Point::default(),
+        0.75,
+    )
+    .is_ok()
 }
 
 fn detect_chat_menu_opened(mat: &impl ToInputArray) -> bool {
@@ -2260,12 +2486,23 @@ fn detect_admin_visible(mat: &impl ToInputArray) -> bool {
     detect_template(mat, &*TEMPLATE, Point::default(), 0.75).is_ok()
 }
 
-fn detect_timer_visible(mat: &impl ToInputArray) -> bool {
-    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(include_bytes!(env!("TIMER_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
-    });
+pub static TIMER_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(include_bytes!(env!("TIMER_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+});
 
-    detect_template(mat, &*TEMPLATE, Point::default(), 0.75).is_ok()
+fn detect_timer_visible(mat: &impl ToInputArray, localization: &Localization) -> bool {
+    let template = localization
+        .timer_base64
+        .as_ref()
+        .and_then(|base64| to_mat_from_base64(base64, true).ok());
+
+    detect_template(
+        mat,
+        template.as_ref().unwrap_or(&*TIMER_TEMPLATE),
+        Point::default(),
+        0.75,
+    )
+    .is_ok()
 }
 
 fn detect_booster<T: MatTraitConst + ToInputArray>(mat: &T, kind: BoosterKind) -> BoosterState {
@@ -2894,6 +3131,29 @@ fn to_grayscale(mat: &impl MatTraitConst, add_contrast: bool) -> Mat {
         });
     }
     mat
+}
+
+/// Converts `base64` to a [`Mat`].
+///
+/// If `grayscale` is `true`, `base64` will be read with [`IMREAD_GRAYSCALE`]. Otherwise, it is
+/// read with [`IMREAD_COLOR`].
+fn to_mat_from_base64(base64: &str, grayscale: bool) -> Result<Mat> {
+    let flag = if grayscale {
+        IMREAD_GRAYSCALE
+    } else {
+        IMREAD_COLOR
+    };
+    let bytes = BASE64_STANDARD.decode(base64)?;
+    let bytes = Vector::<u8>::from_iter(bytes);
+
+    Ok(imdecode(&bytes, flag)?)
+}
+
+/// Converts `mat` to a base64 PNG [`String`].
+pub fn to_base64_from_mat(mat: &Mat) -> Result<String> {
+    let mut bytes = Vector::new();
+    imencode_def(".png", mat, &mut bytes)?;
+    Ok(BASE64_STANDARD.encode(bytes))
 }
 
 /// Extracts a borrowed `Mat` from `SessionOutputs`.

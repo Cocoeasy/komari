@@ -144,16 +144,11 @@ pub struct PingPong {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(test, derive(Default))]
 pub enum PingPongDirection {
+    #[cfg_attr(test, default)]
     Left,
     Right,
-}
-
-#[cfg(test)]
-impl Default for PingPongDirection {
-    fn default() -> Self {
-        Self::Left
-    }
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -1,4 +1,7 @@
-use std::{sync::LazyLock, time::Instant};
+use std::{
+    sync::{Arc, LazyLock},
+    time::Instant,
+};
 
 use include_dir::{Dir, include_dir};
 use log::debug;
@@ -17,6 +20,7 @@ use crate::{
     detect::{ArrowsCalibrating, ArrowsState, DefaultDetector, Detector},
     ecs::Resources,
     mat::OwnedMat,
+    models::Localization,
 };
 
 const SOLVE_RUNE_TIMEOUT_SECS: u64 = 10;
@@ -129,11 +133,13 @@ impl DebugService {
                 .collect()
         });
 
+        let localization = Arc::new(Localization::default());
         let mut calibrating = ArrowsCalibrating::default();
         calibrating.enable_spin_test();
 
         for mat in &*SPIN_TEST_IMAGES {
-            match DefaultDetector::new(OwnedMat::from(mat.clone())).detect_rune_arrows(calibrating)
+            match DefaultDetector::new(OwnedMat::from(mat.clone()), localization.clone())
+                .detect_rune_arrows(calibrating)
             {
                 Ok(ArrowsState::Complete(arrows)) => {
                     debug!(target: "test", "spin test completed {arrows:?}");

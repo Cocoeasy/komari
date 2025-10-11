@@ -20,7 +20,7 @@ pub trait SettingsService: Debug {
     /// Gets the current [`Settings`] in use.
     fn settings(&self) -> Ref<'_, Settings>;
 
-    /// Updates the currently in use [`Settings`] with `new_settings`.
+    /// Updates the currently in use [`Settings`] with new `settings`.
     fn update_settings(&mut self, settings: Settings);
 
     /// Updates `operation`, `input`, `input_receiver` and `capture` to use the

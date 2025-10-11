@@ -8,28 +8,29 @@ use rand_distr::{
 };
 
 pub type RngSeed = [u8; 32];
+pub type PerlinSeed = u32;
 
-/// A wrapper around `StdRng`.
-#[derive(Debug)]
+/// A wrapper around [`StdRng`] and [`Perlin`].
+#[derive(Clone, Debug)]
 pub struct Rng {
-    inner: RefCell<StdRng>,
+    rng: RefCell<StdRng>,
+    rng_seed: RngSeed,
     perlin: Perlin,
-    seed: RngSeed,
 }
 
 impl Rng {
-    pub fn new(seed: RngSeed) -> Self {
+    pub fn new(rng_seed: RngSeed, perlin_seed: PerlinSeed) -> Self {
         Self {
-            inner: RefCell::new(StdRng::from_seed(seed)),
-            perlin: Perlin::new(u32::from_le_bytes([seed[0], seed[1], seed[2], seed[3]])),
-            seed,
+            rng: RefCell::new(StdRng::from_seed(rng_seed)),
+            rng_seed,
+            perlin: Perlin::new(perlin_seed),
         }
     }
 
     /// Retrieves the `RngSeed` used by this `Rng`.
     #[inline]
-    pub fn seed(&self) -> &RngSeed {
-        &self.seed
+    pub fn rng_seed(&self) -> &RngSeed {
+        &self.rng_seed
     }
 
     /// Returns true if Perlin noise at the given coordinates and tick exceeds the threshold.
@@ -50,7 +51,7 @@ impl Rng {
 
     #[inline]
     pub fn random_bool(&self, probability: f64) -> bool {
-        self.inner.borrow_mut().random_bool(probability)
+        self.rng.borrow_mut().random_bool(probability)
     }
 
     #[inline]
@@ -59,12 +60,12 @@ impl Rng {
         T: SampleUniform,
         R: SampleRange<T>,
     {
-        self.inner.borrow_mut().random_range(range)
+        self.rng.borrow_mut().random_range(range)
     }
 
     #[inline]
     pub fn random_choose<T: IteratorRandom>(&self, iter: T) -> Option<T::Item> {
-        iter.choose(&mut self.inner.borrow_mut())
+        iter.choose(&mut self.rng.borrow_mut())
     }
 
     /// Samples a random `(delay, tick count)` pair.
@@ -83,7 +84,7 @@ impl Rng {
     ) -> (f32, u32) {
         debug_assert!(std_ms >= 0.0 && tick_ms > 0.0);
 
-        let mut rng = self.inner.borrow_mut();
+        let mut rng = self.rng.borrow_mut();
         let normal = Normal::new(mean_ms, std_ms).unwrap();
         let ms = normal.sample(&mut rng).max(min_ms).min(max_ms);
         let tick_count = (ms / tick_ms).round() as u32;
@@ -107,7 +108,7 @@ impl Rng {
         // enough for me. Consult ChatGPT, DeepSeek, Claude, ... senseis for more details.
         let normal = Normal::new(0.0, 1.0).unwrap();
 
-        let mut rng = self.inner.borrow_mut();
+        let mut rng = self.rng.borrow_mut();
         let next_mean_normal_sample = normal.sample(&mut rng);
         let next_mean = current_mean
             + reversion_rate * (base_mean - current_mean)
@@ -134,7 +135,7 @@ mod tests {
 
     #[test]
     fn random_tick_count_seeded() {
-        let rng = Rng::new(SEED);
+        let rng = Rng::new(SEED, 1337);
         let (_, count) =
             rng.random_delay_tick_count(83.99979, 28.149803, 1000.0 / 30.0, 80.0, 120.0);
         assert_eq!(count, 2);
@@ -142,7 +143,7 @@ mod tests {
 
     #[test]
     fn random_mu_std_pair_seeded() {
-        let rng = Rng::new(SEED);
+        let rng = Rng::new(SEED, 1337);
         let (mean, std) = rng.random_mean_std_pair(85.0, 85.0, 30.0, 30.0, 0.05, 0.1);
 
         assert!(mean - 84.88451 < 0.01);

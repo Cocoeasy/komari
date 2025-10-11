@@ -159,7 +159,7 @@ impl Resources {
             #[cfg(debug_assertions)]
             debug: Debug::default(),
             input: Box::new(input.unwrap_or_default()),
-            rng: Rng::new(rand::random()),
+            rng: Rng::new(rand::random(), rand::random()),
             notification: DiscordNotification::new(Rc::new(RefCell::new(Settings::default()))),
             detector: detector.map(|detector| Box::new(detector) as Box<dyn Detector>),
             operation: Operation::Running,

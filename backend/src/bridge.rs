@@ -21,7 +21,6 @@ use platforms::{
 
 use crate::{
     CaptureMode, KeyBinding,
-    database::Seeds,
     rng::Rng,
     rpc::{
         Coordinate as RpcCoordinate, InputService, Key as RpcKeyKind, KeyState as RpcKeyState,
@@ -612,10 +611,10 @@ pub struct DefaultInput {
 }
 
 impl DefaultInput {
-    pub fn new(method: InputMethod, seeds: Seeds) -> Self {
+    pub fn new(method: InputMethod, rng: Rng) -> Self {
         Self {
-            kind: input_method_inner_from(method, &seeds.seed),
-            delay_rng: Rng::new(seeds.seed),
+            kind: input_method_inner_from(method, rng.rng_seed()),
+            delay_rng: rng,
             delay_mean_std_pair: (BASE_MEAN_MS_DELAY, BASE_STD_MS_DELAY),
             delay_map: RefCell::new(HashMap::new()),
         }
@@ -774,7 +773,7 @@ impl Input for DefaultInput {
     }
 
     fn set_method(&mut self, method: InputMethod) {
-        self.kind = input_method_inner_from(method, self.delay_rng.seed());
+        self.kind = input_method_inner_from(method, self.delay_rng.rng_seed());
     }
 
     fn send_mouse(&self, x: i32, y: i32, kind: MouseKind) {
@@ -928,13 +927,9 @@ mod tests {
     ];
 
     fn test_key_sender() -> DefaultInput {
-        let seeds = Seeds {
-            id: None,
-            seed: SEED,
-        };
         DefaultInput::new(
             InputMethod::Default(Window::new("Handle"), PlatformInputKind::Focused),
-            seeds,
+            Rng::new(SEED, 1337),
         )
     }
 

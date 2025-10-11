@@ -6,7 +6,9 @@
 use std::{env::current_exe, io::stdout, string::ToString, sync::LazyLock};
 
 use actions::Actions;
-use backend::{Character, Minimap as MinimapData, Settings as SettingsData};
+use backend::{
+    Character, Localization as LocalizationData, Minimap as MinimapData, Settings as SettingsData,
+};
 use characters::Characters;
 #[cfg(debug_assertions)]
 use debug::Debug;
@@ -25,6 +27,8 @@ use navigation::Navigation;
 use rand::distr::{Alphanumeric, SampleString};
 use settings::Settings;
 
+use crate::localization::Localization;
+
 mod actions;
 mod button;
 mod characters;
@@ -32,6 +36,7 @@ mod characters;
 mod debug;
 mod icons;
 mod inputs;
+mod localization;
 mod minimap;
 mod navigation;
 mod popup;
@@ -44,6 +49,7 @@ const TAB_ACTIONS: &str = "Actions";
 const TAB_CHARACTERS: &str = "Characters";
 const TAB_NAVIGATION: &str = "Navigation";
 const TAB_SETTINGS: &str = "Settings";
+const TAB_LOCALIZATION: &str = "Localization";
 #[cfg(debug_assertions)]
 const TAB_DEBUG: &str = "Debug";
 
@@ -53,6 +59,7 @@ static TABS: LazyLock<Vec<String>> = LazyLock::new(|| {
         TAB_CHARACTERS.to_string(),
         TAB_NAVIGATION.to_string(),
         TAB_SETTINGS.to_string(),
+        TAB_LOCALIZATION.to_string(),
         #[cfg(debug_assertions)]
         TAB_DEBUG.to_string(),
     ]
@@ -99,6 +106,7 @@ pub struct AppState {
     minimap_preset: Signal<Option<String>>,
     character: Signal<Option<Character>>,
     settings: Signal<Option<SettingsData>>,
+    localization: Signal<Option<LocalizationData>>,
     position: Signal<(i32, i32)>,
 }
 
@@ -112,6 +120,7 @@ fn App() -> Element {
         minimap_preset: Signal::new(None),
         character: Signal::new(None),
         settings: Signal::new(None),
+        localization: Signal::new(None),
         position: Signal::new((0, 0)),
     });
 
@@ -159,6 +168,9 @@ fn App() -> Element {
                             },
                             TAB_NAVIGATION => rsx! {
                                 Navigation {}
+                            },
+                            TAB_LOCALIZATION => rsx! {
+                                Localization {}
                             },
                             #[cfg(debug_assertions)]
                             TAB_DEBUG => rsx! {

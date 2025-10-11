@@ -355,8 +355,10 @@ mod tests {
             .once()
             .return_const(());
 
-        let mut service = DefaultRotatorService::default();
-        service.buffs = buffs;
+        let service = DefaultRotatorService {
+            buffs,
+            ..Default::default()
+        };
         service.apply(&mut rotator, None, None, &Settings::default());
     }
 

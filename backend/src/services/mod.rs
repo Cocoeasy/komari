@@ -1,9 +1,9 @@
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
 
 use dyn_clone::clone_box;
 use opencv::{
     core::{ToInputArray, Vector},
-    imgcodecs::imencode_def,
+    imgcodecs::{IMREAD_COLOR, IMREAD_GRAYSCALE, imdecode, imencode_def},
 };
 use platforms::{Window, input::InputKind};
 use serenity::all::{CreateAttachment, EditInteractionResponse};
@@ -15,10 +15,11 @@ use tokio::{
 };
 
 use crate::{
-    ActionKeyDirection, ActionKeyWith, Character, GameState, KeyBinding, LinkKeyBinding, Minimap,
-    NavigationPath, RequestHandler, RotateKind, Settings,
+    ActionKeyDirection, ActionKeyWith, Character, GameState, GameTemplate, KeyBinding,
+    LinkKeyBinding, Localization, Minimap, NavigationPath, RequestHandler, RotateKind, Settings,
     bridge::{Capture, DefaultInputReceiver, Input},
     control::{BotAction, BotCommandKind},
+    detect::to_base64_from_mat,
     ecs::{Resources, World, WorldEvent},
     navigator::Navigator,
     notification::NotificationKind,
@@ -30,6 +31,7 @@ use crate::{
         character::{CharacterService, DefaultCharacterService},
         control::ControlService,
         game::{DefaultGameService, GameEvent, GameService},
+        localization::{DefaultLocalizationService, LocalizationService},
         minimap::{DefaultMinimapService, MinimapService},
         navigator::{DefaultNavigatorService, NavigatorService},
         rotator::{DefaultRotatorService, RotatorService},
@@ -44,6 +46,7 @@ mod control;
 #[cfg(debug_assertions)]
 mod debug;
 mod game;
+mod localization;
 mod minimap;
 mod navigator;
 mod rotator;
@@ -59,13 +62,18 @@ pub struct DefaultService {
     rotator: Box<dyn RotatorService>,
     navigator: Box<dyn NavigatorService>,
     settings: Box<dyn SettingsService>,
+    localization: Box<dyn LocalizationService>,
     bot: ControlService,
     #[cfg(debug_assertions)]
     debug: DebugService,
 }
 
 impl DefaultService {
-    pub fn new(settings: Rc<RefCell<Settings>>, event_rx: Receiver<WorldEvent>) -> Self {
+    pub fn new(
+        settings: Rc<RefCell<Settings>>,
+        localization: Rc<RefCell<Arc<Localization>>>,
+        event_rx: Receiver<WorldEvent>,
+    ) -> Self {
         let settings_service = DefaultSettingsService::new(settings.clone());
         let window = settings_service.selected_window();
         let input_rx = DefaultInputReceiver::new(window, InputKind::Focused);
@@ -81,6 +89,7 @@ impl DefaultService {
             rotator: Box::new(DefaultRotatorService::default()),
             navigator: Box::new(DefaultNavigatorService),
             settings: Box::new(settings_service),
+            localization: Box::new(DefaultLocalizationService::new(localization)),
             bot,
             #[cfg(debug_assertions)]
             debug: DebugService::default(),
@@ -178,6 +187,9 @@ impl DefaultRequestHandler<'_> {
                         self.service.character.character(),
                         &self.service.settings.settings(),
                     );
+                }
+                GameEvent::LocalizationUpdated(localization) => {
+                    self.service.localization.update_localization(localization)
                 }
                 GameEvent::NavigationPathsUpdated => self.navigator.mark_dirty(true),
             }
@@ -532,6 +544,22 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             self.service.game.input_receiver_mut(),
             self.capture,
         );
+    }
+
+    fn on_query_template(&self, template: GameTemplate) -> String {
+        self.service.localization.template(template)
+    }
+
+    fn on_convert_image_to_base64(&self, image: Vec<u8>, is_grayscale: bool) -> Option<String> {
+        let flag = if is_grayscale {
+            IMREAD_GRAYSCALE
+        } else {
+            IMREAD_COLOR
+        };
+        let vector = Vector::<u8>::from_iter(image);
+        let mat = imdecode(&vector, flag).ok()?;
+
+        to_base64_from_mat(&mat).ok()
     }
 
     #[cfg(debug_assertions)]
