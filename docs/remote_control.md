@@ -5,7 +5,7 @@ An example of using Sunshine/Moonlight tested using the below setup:
 3. Set your MapleStory game in Sunshine host to `1366x768` full screen
 
 ![Moonlight](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/moonlight.webp?raw=true)
-![Game Resolution](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/gameresolution.webp?raw=true)
+![Game Resolution](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/game_resolution.webp?raw=true)
 
 ## Geforce Now
 For anyone using Geforce Now, to ensure the bot is working correctly, you need to make sure both the game and Geforce Now have matching resolutions with the game in fullscreen mode similar to Windowed mode setup for Sunshine/Moonlight. An example:
@@ -13,5 +13,5 @@ For anyone using Geforce Now, to ensure the bot is working correctly, you need t
 2. Use https://github.com/dtgDTGdtg/SRWE to change Geforce Now window size to same configured size (`1366x768`),
 3. Use `BitBltArea` or directly select handle to capture (If directly selecting a handle, you should use `Windows 10` capture mode)
 
-![Geforce Now](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/gf_now.webp?raw=true)
+![Geforce Now](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/geforce_now.webp?raw=true)
 ![SRWE](https://github.com/sasanquaa/maple-bot/blob/master/.github/images/srwe.webp?raw=true)
