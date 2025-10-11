@@ -1342,7 +1342,7 @@ impl PlayerContext {
         if is_dead {
             let update =
                 update_detection_task(resources, 1000, &mut self.is_dead_button_task, |detector| {
-                    detector.detect_tomb_ok_button()
+                    detector.detect_popup_ok_new_button()
                 });
             match update {
                 Update::Ok(bbox) => {

@@ -158,11 +158,11 @@ pub trait Detector: 'static + Send + DynClone + Debug {
     /// Detects whether to press ESC for unstucking.
     fn detect_esc_settings(&self) -> bool;
 
-    /// Detects the ESC confirm button.
-    fn detect_esc_confirm_button(&self) -> Result<Rect>;
+    /// Detects the popup `Confirm` button.
+    fn detect_popup_confirm_button(&self) -> Result<Rect>;
 
-    /// Detects the Tomb ok button.
-    fn detect_tomb_ok_button(&self) -> Result<Rect>;
+    /// Detects the new popup `OK` button.
+    fn detect_popup_ok_new_button(&self) -> Result<Rect>;
 
     /// Detects whether there is an elite boss bar.
     fn detect_elite_boss_bar(&self) -> bool;
@@ -293,8 +293,8 @@ mock! {
         fn grayscale_mat(&self) -> &Mat;
         fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>>;
         fn detect_esc_settings(&self) -> bool;
-        fn detect_esc_confirm_button(&self) -> Result<Rect>;
-        fn detect_tomb_ok_button(&self) -> Result<Rect>;
+        fn detect_popup_confirm_button(&self) -> Result<Rect>;
+        fn detect_popup_ok_new_button(&self) -> Result<Rect>;
         fn detect_elite_boss_bar(&self) -> bool;
         fn detect_minimap(&self, border_threshold: u8) -> Result<Rect>;
         fn detect_minimap_name(&self, minimap: Rect) -> Result<Rect>;
@@ -393,12 +393,12 @@ impl Detector for DefaultDetector {
         detect_esc_settings(&**self.grayscale)
     }
 
-    fn detect_esc_confirm_button(&self) -> Result<Rect> {
-        detect_esc_confirm_button(&**self.grayscale)
+    fn detect_popup_confirm_button(&self) -> Result<Rect> {
+        detect_popup_confirm_button(&**self.grayscale)
     }
 
-    fn detect_tomb_ok_button(&self) -> Result<Rect> {
-        detect_tomb_ok_button(&**self.grayscale)
+    fn detect_popup_ok_new_button(&self) -> Result<Rect> {
+        detect_popup_ok_new_button(&**self.grayscale)
     }
 
     fn detect_elite_boss_bar(&self) -> bool {
@@ -665,62 +665,63 @@ fn detect_mobs(
     Ok(points)
 }
 
-static ESC_YES_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
-    imgcodecs::imdecode(include_bytes!(env!("ESC_YES_TEMPLATE")), IMREAD_GRAYSCALE).unwrap()
+static POPUP_OK_NEW_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+    imgcodecs::imdecode(
+        include_bytes!(env!("POPUP_OK_NEW_TEMPLATE")),
+        IMREAD_GRAYSCALE,
+    )
+    .unwrap()
 });
 
-static ESC_CONFIRM_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
+static POPUP_CONFIRM_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
     imgcodecs::imdecode(
-        include_bytes!(env!("ESC_CONFIRM_TEMPLATE")),
+        include_bytes!(env!("POPUP_CONFIRM_TEMPLATE")),
         IMREAD_GRAYSCALE,
     )
     .unwrap()
 });
 
 /// TODO: Support default ratio
-static ESC_SETTINGS: LazyLock<[Mat; 12]> = LazyLock::new(|| {
+static ESC_TEMPLATES: LazyLock<[Mat; 9]> = LazyLock::new(|| {
     [
         imgcodecs::imdecode(
-            include_bytes!(env!("ESC_SETTING_TEMPLATE")),
+            include_bytes!(env!("ESC_MENU_X_TEMPLATE")),
             IMREAD_GRAYSCALE,
         )
         .unwrap(),
-        imgcodecs::imdecode(include_bytes!(env!("ESC_MENU_TEMPLATE")), IMREAD_GRAYSCALE).unwrap(),
-        imgcodecs::imdecode(include_bytes!(env!("ESC_EVENT_TEMPLATE")), IMREAD_GRAYSCALE).unwrap(),
+        imgcodecs::imdecode(include_bytes!(env!("POPUP_YES_TEMPLATE")), IMREAD_GRAYSCALE).unwrap(),
         imgcodecs::imdecode(
-            include_bytes!(env!("ESC_COMMUNITY_TEMPLATE")),
+            include_bytes!(env!("POPUP_OK_OLD_TEMPLATE")),
             IMREAD_GRAYSCALE,
         )
         .unwrap(),
+        POPUP_OK_NEW_TEMPLATE.clone(),
+        POPUP_CONFIRM_TEMPLATE.clone(),
         imgcodecs::imdecode(
-            include_bytes!(env!("ESC_CHARACTER_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap(),
-        ESC_YES_TEMPLATE.clone(),
-        imgcodecs::imdecode(include_bytes!(env!("ESC_OK_TEMPLATE")), IMREAD_GRAYSCALE).unwrap(),
-        ESC_CONFIRM_TEMPLATE.clone(),
-        imgcodecs::imdecode(
-            include_bytes!(env!("ESC_CANCEL_TEMPLATE")),
+            include_bytes!(env!("POPUP_CANCEL_OLD_TEMPLATE")),
             IMREAD_GRAYSCALE,
         )
         .unwrap(),
         imgcodecs::imdecode(
-            include_bytes!(env!("ESC_CANCEL_NEW_TEMPLATE")),
+            include_bytes!(env!("POPUP_CANCEL_NEW_TEMPLATE")),
             IMREAD_GRAYSCALE,
         )
         .unwrap(),
         imgcodecs::imdecode(
-            include_bytes!(env!("ESC_END_CHAT_TEMPLATE")),
+            include_bytes!(env!("POPUP_END_CHAT_TEMPLATE")),
             IMREAD_GRAYSCALE,
         )
         .unwrap(),
-        imgcodecs::imdecode(include_bytes!(env!("ESC_NEXT_TEMPLATE")), IMREAD_GRAYSCALE).unwrap(),
+        imgcodecs::imdecode(
+            include_bytes!(env!("POPUP_NEXT_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap(),
     ]
 });
 
 fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
-    for template in &*ESC_SETTINGS {
+    for template in &*ESC_TEMPLATES {
         if detect_template(mat, template, Point::default(), 0.75).is_ok() {
             return true;
         }
@@ -728,20 +729,12 @@ fn detect_esc_settings(mat: &impl ToInputArray) -> bool {
     false
 }
 
-fn detect_esc_confirm_button(mat: &impl ToInputArray) -> Result<Rect> {
-    detect_template(mat, &*ESC_CONFIRM_TEMPLATE, Point::default(), 0.75)
+fn detect_popup_confirm_button(mat: &impl ToInputArray) -> Result<Rect> {
+    detect_template(mat, &*POPUP_CONFIRM_TEMPLATE, Point::default(), 0.75)
 }
 
-fn detect_tomb_ok_button(mat: &impl ToInputArray) -> Result<Rect> {
-    static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
-        imgcodecs::imdecode(
-            include_bytes!(env!("TOMB_BUTTON_OK_TEMPLATE")),
-            IMREAD_GRAYSCALE,
-        )
-        .unwrap()
-    });
-
-    detect_template(mat, &*TEMPLATE, Point::default(), 0.75)
+fn detect_popup_ok_new_button(mat: &impl ToInputArray) -> Result<Rect> {
+    detect_template(mat, &*POPUP_OK_NEW_TEMPLATE, Point::default(), 0.75)
 }
 
 fn detect_elite_boss_bar(mat: &impl MatTraitConst) -> bool {

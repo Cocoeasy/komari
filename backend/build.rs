@@ -7,21 +7,14 @@ use std::{
 
 fn main() {
     let dir = env::current_dir().unwrap().join("resources");
-    let esc_setting = dir.join("esc_setting_ideal_ratio.png");
-    let esc_menu = dir.join("esc_menu_ideal_ratio.png");
-    let esc_event = dir.join("esc_event_ideal_ratio.png");
-    let esc_community = dir.join("esc_community_ideal_ratio.png");
-    let esc_character = dir.join("esc_character_ideal_ratio.png");
-    let esc_yes = dir.join("esc_yes_ideal_ratio.png");
-    let esc_ok = dir.join("esc_ok_ideal_ratio.png");
-    let esc_confirm = dir.join("esc_confirm_ideal_ratio.png");
-    let esc_cancel = dir.join("esc_cancel_ideal_ratio.png");
-    let esc_cancel_new = dir.join("esc_cancel_new_ideal_ratio.png");
-    let esc_end_chat = dir.join("esc_end_chat_ideal_ratio.png");
-    let esc_next = dir.join("esc_next_ideal_ratio.png");
-
-    let tomb = dir.join("tomb_ideal_ratio.png");
-    let tomb_ok = dir.join("tomb_button_ok_ideal_ratio.png");
+    let popup_yes = dir.join("popup_yes_ideal_ratio.png");
+    let popup_ok_old = dir.join("popup_ok_old_ideal_ratio.png");
+    let popup_ok_new = dir.join("popup_ok_new_ideal_ratio.png");
+    let popup_confirm = dir.join("popup_confirm_ideal_ratio.png");
+    let popup_cancel_old = dir.join("popup_cancel_old_ideal_ratio.png");
+    let popup_cancel_new = dir.join("popup_cancel_new_ideal_ratio.png");
+    let popup_end_chat = dir.join("popup_end_chat_ideal_ratio.png");
+    let popup_next = dir.join("popup_next_ideal_ratio.png");
 
     let elite_boss_bar_1 = dir.join("elite_boss_bar_1_ideal_ratio.png");
     let elite_boss_bar_2 = dir.join("elite_boss_bar_2_ideal_ratio.png");
@@ -35,6 +28,8 @@ fn main() {
     let player_guildie = dir.join("player_guildie_ideal_ratio.png");
     let player_friend = dir.join("player_friend_ideal_ratio.png");
 
+    let esc_menu_x = dir.join("esc_menu_x_ideal_ratio.png");
+    let tomb = dir.join("tomb_ideal_ratio.png");
     let cash_shop = dir.join("cash_shop.png");
     let erda_shower = dir.join("erda_shower_ideal_ratio.png");
     let portal = dir.join("portal_ideal_ratio.png");
@@ -118,58 +113,36 @@ fn main() {
 
     tonic_build::compile_protos("proto/input.proto").unwrap();
     println!(
-        "cargo:rustc-env=ESC_SETTING_TEMPLATE={}",
-        esc_setting.to_str().unwrap()
+        "cargo:rustc-env=POPUP_YES_TEMPLATE={}",
+        popup_yes.to_str().unwrap()
     );
     println!(
-        "cargo:rustc-env=ESC_MENU_TEMPLATE={}",
-        esc_menu.to_str().unwrap()
+        "cargo:rustc-env=POPUP_OK_OLD_TEMPLATE={}",
+        popup_ok_old.to_str().unwrap()
     );
     println!(
-        "cargo:rustc-env=ESC_EVENT_TEMPLATE={}",
-        esc_event.to_str().unwrap()
+        "cargo:rustc-env=POPUP_OK_NEW_TEMPLATE={}",
+        popup_ok_new.to_str().unwrap()
     );
     println!(
-        "cargo:rustc-env=ESC_COMMUNITY_TEMPLATE={}",
-        esc_community.to_str().unwrap()
+        "cargo:rustc-env=POPUP_CONFIRM_TEMPLATE={}",
+        popup_confirm.to_str().unwrap()
     );
     println!(
-        "cargo:rustc-env=ESC_CHARACTER_TEMPLATE={}",
-        esc_character.to_str().unwrap()
+        "cargo:rustc-env=POPUP_CANCEL_OLD_TEMPLATE={}",
+        popup_cancel_old.to_str().unwrap()
     );
     println!(
-        "cargo:rustc-env=ESC_YES_TEMPLATE={}",
-        esc_yes.to_str().unwrap()
+        "cargo:rustc-env=POPUP_CANCEL_NEW_TEMPLATE={}",
+        popup_cancel_new.to_str().unwrap()
     );
     println!(
-        "cargo:rustc-env=ESC_OK_TEMPLATE={}",
-        esc_ok.to_str().unwrap()
+        "cargo:rustc-env=POPUP_END_CHAT_TEMPLATE={}",
+        popup_end_chat.to_str().unwrap()
     );
     println!(
-        "cargo:rustc-env=ESC_CONFIRM_TEMPLATE={}",
-        esc_confirm.to_str().unwrap()
-    );
-    println!(
-        "cargo:rustc-env=ESC_CANCEL_TEMPLATE={}",
-        esc_cancel.to_str().unwrap()
-    );
-    println!(
-        "cargo:rustc-env=ESC_CANCEL_NEW_TEMPLATE={}",
-        esc_cancel_new.to_str().unwrap()
-    );
-    println!(
-        "cargo:rustc-env=ESC_END_CHAT_TEMPLATE={}",
-        esc_end_chat.to_str().unwrap()
-    );
-    println!(
-        "cargo:rustc-env=ESC_NEXT_TEMPLATE={}",
-        esc_next.to_str().unwrap()
-    );
-
-    println!("cargo:rustc-env=TOMB_TEMPLATE={}", tomb.to_str().unwrap());
-    println!(
-        "cargo:rustc-env=TOMB_BUTTON_OK_TEMPLATE={}",
-        tomb_ok.to_str().unwrap()
+        "cargo:rustc-env=POPUP_NEXT_TEMPLATE={}",
+        popup_next.to_str().unwrap()
     );
 
     println!(
@@ -214,6 +187,11 @@ fn main() {
         player_friend.to_str().unwrap()
     );
 
+    println!(
+        "cargo:rustc-env=ESC_MENU_X_TEMPLATE={}",
+        esc_menu_x.to_str().unwrap()
+    );
+    println!("cargo:rustc-env=TOMB_TEMPLATE={}", tomb.to_str().unwrap());
     println!(
         "cargo:rustc-env=CASH_SHOP_TEMPLATE={}",
         cash_shop.to_str().unwrap()

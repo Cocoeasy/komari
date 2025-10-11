@@ -176,7 +176,7 @@ fn update_going_to_town(resources: &Resources, panicking: &mut Panicking, key: K
         }
 
         Lifecycle::Ended => {
-            let has_confirm_button = resources.detector().detect_esc_confirm_button().is_ok();
+            let has_confirm_button = resources.detector().detect_popup_confirm_button().is_ok();
             if has_confirm_button {
                 resources.input.send_key(KeyKind::Enter);
             }
