@@ -26,16 +26,12 @@
   - [Auto Mobbing & Platforms Pathing](#auto-mobbing--platforms-pathing)
   - [Rune Solving](#rune-solving)
 
----
-
 ## Download
 
 1. Go to the [GitHub Release Page](https://github.com/sasanquaa/komari/releases)
 2. Download `app-release-gpu.zip` or `app-release-cpu.zip`
 3. Extract the archive
 4. Run the `.exe` file
-
----
 
 ## Concepts
 
@@ -50,8 +46,6 @@
 
 ![Map](https://github.com/sasanquaa/komari/blob/master/.github/images/map.png?raw=true)
 
----
-
 ### Movement
 
 Default bot movement (without platform pathing) follows these steps:
@@ -60,8 +54,6 @@ Default bot movement (without platform pathing) follows these steps:
 2. Then performs a fall, up-jump, or grapple to match the destination’s `y` coordinate.
 
 If the bot is close enough to the destination (within `25` units, subject to change), it will **walk** instead of performing a double jump.
-
----
 
 ### Characters
 
@@ -81,6 +73,7 @@ If the bot is close enough to the destination (within `25` units, subject to cha
 8. `Others` – Miscellaneous character settings.
 
 ##### Potion Mode
+
 There are two modes available for configuring potion usage:
 
 - `EveryMillis` – Uses a potion every `x` milliseconds.  
@@ -90,9 +83,9 @@ There are two modes available for configuring potion usage:
 
 - `Disable teleport on fall` – Disables teleport after falling (useful for mage classes).
 - `Disable double jumping` – Disables the `DoubleJumping` state (e.g., makes the bot only walk).  
-  > Works only if the action does not have `Use with = DoubleJump`.
+  - Works only if the action does not have `Use with = DoubleJump`.
 - `Disable walking` – Disables the `Adjusting` state (forces horizontal movement by double jumps only).  
-  > Works only if the action does not have `Adjust` ticked.
+  - Works only if the action does not have `Adjust` ticked.
 
 From **v0.12**, the `Rope Lift` skill can now be disabled. If not provided, the bot will attempt to up-jump instead.
 
@@ -103,8 +96,6 @@ From **v0.12**, the `Rope Lift` skill can now be disabled. If not provided, the 
 
 From **v0.21**, if multiple conflicting buffs (e.g., x2/x3 EXP coupons, small/large WAP) are enabled,  
 the bot will prevent buffing one if it detects the other is active. Currently, it does **not** prioritize which buff to use first.
-
----
 
 ### Action
 
@@ -135,8 +126,7 @@ Current priority actions include:
 
 #### Configuration
 
-**Move**
-
+For `Move` action:
 - `Adjust` – Ensures the actual position matches the target closely.  
   - When enabled, it overrides the `Disable walking` option and allows walking.  
 - `X` – Horizontal coordinate to move to.  
@@ -146,8 +136,7 @@ Current priority actions include:
 - `Linked action` – See [Linked Key & Linked Action](#linked-key--linked-action).  
   - Can only be used if it is not the first action or the list is non-empty.
 
-**Key**
-
+For `Key` action:
 - `Positioned` – Determines if the key action is position-dependent.  
 - `X / X random range / Y / Adjust / Linked action` – Same as Move Action.  
 - `Key` – The key to press.  
@@ -170,13 +159,10 @@ Actions can be reordered using the up/down icons.
 
 ![Actions](https://github.com/sasanquaa/komari/blob/master/.github/images/actions.png?raw=true)
 
----
-
 ### Linked Key & Linked Action
 
-Useful for combo-oriented classes such as Blaster, Cadena, Ark, Mercedes, etc.  
-Each class has unique animation cancel timings, which can be configured in
-`Characters` → `Others` → `Link key timing class`.
+Useful for combo-oriented classes such as Blaster, Cadena, Ark, Mercedes, etc. Animation cancel timings
+depend on the class, which can be configured in `Characters` → `Others` → `Link key timing class`.
 
 #### Link Key Types
 
@@ -200,8 +186,6 @@ The first action starts the chain:
 
 Linked actions appear visually connected with vertical bars. Once a chain begins, it cannot be overridden by any other actions.
 
----
-
 ### Rotation Modes
 
 Rotation mode defines how **normal actions** are executed (priority actions are unaffected).  
@@ -215,8 +199,6 @@ You can select the mode in `Actions` → `Rotation`.
 - `PingPong` – Ignores normal actions; moves and attacks between bounds.
 
 Priority actions (`Every milliseconds` and `Erda Shower off cooldown`) still follow their own logic.
-
----
 
 #### Auto-Mobbing
 
@@ -242,8 +224,6 @@ From **v0.21.0**, two new options are added:
 - `Auto mobbing uses key when pathing` – Uses mobbing key while moving between quadrants and mobs are detected ahead.  
 - `Detect mobs when pathing every` – Sets mobs detection interval when moving between quadrants.
 
----
-
 #### Ping Pong
 
 Introduced in **v0.12**.
@@ -266,8 +246,6 @@ Use hotkeys to add them quickly.
 
 > **Note**:
 > Adding platforms improves Auto-mobbing movement.
-
----
 
 ### Navigation
 
@@ -306,8 +284,6 @@ Useful for:
 
 From **v0.21**, added `Use grayscale for map` option for better minimap matching if color-based detection fails.
 
----
-
 ### Run/Stop Cycle
 
 Introduced in **v0.19**.
@@ -323,8 +299,6 @@ Found under `Settings` → `Run/stop cycle`:
 - If `Repeat` mode is used, navigation paths must be setup.
 
 The `Suspend` button allows pausing temporarily without resetting timer.
-
----
 
 ### Capture Modes
 
@@ -364,8 +338,6 @@ For best results, keep available cards visible without scrolling.
 > - After swapping, familiar buff will be turned off. To enable familiar buff again, enables it in the `Buffs` tab.  
 > - All familiar slots must be unlocked, and the familiar menu key binding must be set.
 
----
-
 ### Panic Mode
 
 Introduced in **v0.14**.
@@ -379,8 +351,6 @@ Requires `Change channel` key binding.
 From **v0.18**, if `Stop actions on fail or map change` is also enabled, the bot stops and goes to town upon failure. 
 Requires `To town` key binding.
 
----
-
 ### Elite Boss Spawns Behavior
 
 Introduced in **v0.17**, previously known as `Change channel on Elite Boss`.
@@ -391,8 +361,6 @@ Available behaviors:
 - `None` – No action.  
 - `CycleChannel` – Changes channel when an Elite Boss appears.  
 - `UseKey` – Triggers a key (useful for origin skills).
-
----
 
 ### Control and Notifications
 
@@ -428,8 +396,6 @@ Introduced in **v0.20**.
 
 > The Discord bot is experimental and may change.
 
----
-
 ## Video Guides
 
 From v0.16 — the first two videos are outdated but still useful for basics.
@@ -438,8 +404,6 @@ From v0.16 — the first two videos are outdated but still useful for basics.
 2. [Auto-Mobbing and Platforms Pathing](https://youtu.be/8r2duEz6278?si=HTHb8WXh6L7ulCoE)  
 3. Rotation Modes, Linked Key & Linked Actions (TODO)  
    - [Clockwise Rotation Example](https://youtu.be/-glx3b0jGEY?si=nuEDmIQTuiz3LtIq)
-
----
 
 ## Showcase (Examples from v0.1)
 
