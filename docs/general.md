@@ -46,6 +46,8 @@
 
 ![Map](https://github.com/sasanquaa/komari/blob/master/.github/images/map.png?raw=true)
 
+---
+
 ### Movement
 
 Default bot movement (without platform pathing) follows these steps:
@@ -54,6 +56,8 @@ Default bot movement (without platform pathing) follows these steps:
 2. Then performs a fall, up-jump, or grapple to match the destination’s `y` coordinate.
 
 If the bot is close enough to the destination (within `25` units, subject to change), it will **walk** instead of performing a double jump.
+
+---
 
 ### Characters
 
@@ -96,6 +100,8 @@ From **v0.12**, the `Rope Lift` skill can now be disabled. If not provided, the 
 
 From **v0.21**, if multiple conflicting buffs (e.g., x2/x3 EXP coupons, small/large WAP) are enabled,  
 the bot will prevent buffing one if it detects the other is active. Currently, it does **not** prioritize which buff to use first.
+
+---
 
 ### Action
 
@@ -159,6 +165,8 @@ Actions can be reordered using the up/down icons.
 
 ![Actions](https://github.com/sasanquaa/komari/blob/master/.github/images/actions.png?raw=true)
 
+---
+
 ### Linked Key & Linked Action
 
 Useful for combo-oriented classes such as Blaster, Cadena, Ark, Mercedes, etc. Animation cancel timings
@@ -185,6 +193,8 @@ The first action starts the chain:
 ![Linked Actions](https://github.com/sasanquaa/komari/blob/master/.github/images/linked_actions.png?raw=true)
 
 Linked actions appear visually connected with vertical bars. Once a chain begins, it cannot be overridden by any other actions.
+
+---
 
 ### Rotation Modes
 
@@ -237,6 +247,7 @@ This mode will try to force the player to always be within the bound. If player 
 
 Simpler than Auto-mobbing; suitable for classes that primarily jump and spam attacks (e.g., Night Walker).
 
+---
 
 ### Platforms Pathing
 
@@ -246,6 +257,8 @@ Use hotkeys to add them quickly.
 
 > **Note**:
 > Adding platforms improves Auto-mobbing movement.
+
+---
 
 ### Navigation
 
@@ -284,6 +297,8 @@ Useful for:
 
 From **v0.21**, added `Use grayscale for map` option for better minimap matching if color-based detection fails.
 
+---
+
 ### Run/Stop Cycle
 
 Introduced in **v0.19**.
@@ -299,6 +314,8 @@ Found under `Settings` → `Run/stop cycle`:
 - If `Repeat` mode is used, navigation paths must be setup.
 
 The `Suspend` button allows pausing temporarily without resetting timer.
+
+---
 
 ### Capture Modes
 
@@ -316,6 +333,8 @@ Defines how the bot captures the game image. Three modes available:
    - **Key inputs are sent to the focused window above the capture area**.
 
 You can also directly select a capture window via `Handle`.
+
+---
 
 ### Familiars Swapping
 
@@ -338,6 +357,8 @@ For best results, keep available cards visible without scrolling.
 > - After swapping, familiar buff will be turned off. To enable familiar buff again, enables it in the `Buffs` tab.  
 > - All familiar slots must be unlocked, and the familiar menu key binding must be set.
 
+---
+
 ### Panic Mode
 
 Introduced in **v0.14**.
@@ -351,6 +372,8 @@ Requires `Change channel` key binding.
 From **v0.18**, if `Stop actions on fail or map change` is also enabled, the bot stops and goes to town upon failure. 
 Requires `To town` key binding.
 
+---
+
 ### Elite Boss Spawns Behavior
 
 Introduced in **v0.17**, previously known as `Change channel on Elite Boss`.
@@ -361,6 +384,8 @@ Available behaviors:
 - `None` – No action.  
 - `CycleChannel` – Changes channel when an Elite Boss appears.  
 - `UseKey` – Triggers a key (useful for origin skills).
+
+---
 
 ### Control and Notifications
 
