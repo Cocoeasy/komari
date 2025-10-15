@@ -183,7 +183,7 @@ mod tests {
             .context
             .task
             .as_ref()
-            .map_or(false, |task| task.completed())
+            .is_some_and(|task| task.completed())
         {
             run_system(resources, skill, Player::Idle);
             advance(Duration::from_millis(1000)).await;

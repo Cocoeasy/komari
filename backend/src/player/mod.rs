@@ -28,6 +28,7 @@ use crate::{
     player::{
         chat::{Chatting, update_chatting_state},
         grapple::Grappling,
+        use_booster::{UsingBooster, update_using_booster_state},
     },
     transition, transition_if,
 };
@@ -50,6 +51,7 @@ mod state;
 mod timeout;
 mod unstuck;
 mod up_jump;
+mod use_booster;
 mod use_key;
 
 pub use actions::*;
@@ -109,6 +111,7 @@ pub enum Player {
     FamiliarsSwapping(FamiliarsSwapping),
     Panicking(Panicking),
     Chatting(Chatting),
+    UsingBooster(UsingBooster),
 }
 
 impl Player {
@@ -151,6 +154,7 @@ impl Player {
             | Player::FamiliarsSwapping(_)
             | Player::Chatting(_)
             | Player::Panicking(_)
+            | Player::UsingBooster(_)
             | Player::Stalling(_, _) => false,
         }
     }
@@ -261,6 +265,7 @@ fn update_non_positional_state(
             update_panicking_state(resources, player, minimap_state, panicking);
         }
         Player::Chatting(chatting) => update_chatting_state(resources, player, chatting),
+        Player::UsingBooster(_) => update_using_booster_state(resources, player),
         Player::Detecting
         | Player::Idle
         | Player::Moving(_, _, _)
@@ -303,6 +308,7 @@ fn update_positional_state(
         | Player::FamiliarsSwapping(_)
         | Player::Panicking(_)
         | Player::Chatting(_)
+        | Player::UsingBooster(_)
         | Player::CashShopThenExit(_) => unreachable!(),
     }
 }

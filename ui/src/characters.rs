@@ -126,6 +126,7 @@ pub fn Characters() -> Element {
             SectionKeyBindings { character_view, save_character }
             SectionFeedPet { character_view, save_character }
             SectionUsePotion { character_view, save_character }
+            SectionUseBooster { character_view, save_character }
             SectionMovement { character_view, save_character }
             SectionBuffs { character_view, save_character }
             SectionFixedActions {
@@ -308,7 +309,6 @@ fn SectionKeyBindings(
                     },
                     value: character_view().familiar_menu_key,
                 }
-
             }
         }
     }
@@ -459,6 +459,46 @@ fn SectionUsePotion(
                             }
                         }
                     },
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn SectionUseBooster(
+    character_view: Memo<Character>,
+    save_character: Callback<Character>,
+) -> Element {
+    rsx! {
+        Section { name: "Use booster",
+            div { class: "grid grid-cols-3 gap-4",
+                KeyBindingConfigurationInput {
+                    label: "VIP Booster key",
+                    div_class: "col-span-2",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |key_config: Option<KeyBindingConfiguration>| {
+                        save_character(Character {
+                            vip_booster_key: key_config.expect("not optional"),
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().vip_booster_key,
+                }
+                CharactersCheckbox {
+                    label: "Enabled",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |enabled| {
+                        let character = character_view.peek().clone();
+                        save_character(Character {
+                            vip_booster_key: KeyBindingConfiguration {
+                                enabled,
+                                ..character.vip_booster_key
+                            },
+                            ..character
+                        });
+                    },
+                    value: character_view().vip_booster_key.enabled,
                 }
             }
         }

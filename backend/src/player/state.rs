@@ -28,6 +28,10 @@ const STATIONARY_TIMEOUT: u32 = MOVE_TIMEOUT + 1;
 /// [`Player::CashShopThenExit`].
 const MAX_RUNE_FAILED_COUNT: u32 = 8;
 
+/// The maximum number of times using VIP Booster can fail before it is determined that it is not
+/// usable anymore (e.g. 10 times limit reached).
+const MAX_VIP_BOOSTER_FAILED_COUNT: u32 = 5;
+
 /// The maximum number of times horizontal movement can be repeated in non-auto-mobbing action.
 const HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 20;
 
@@ -165,6 +169,8 @@ pub struct PlayerConfiguration {
     pub use_potion_below_percent: Option<f32>,
     /// Milliseconds interval to update current health.
     pub update_health_millis: Option<u64>,
+    /// VIP Booster key.
+    pub vip_booster_key: KeyKind,
 }
 
 impl Default for PlayerConfiguration {
@@ -195,6 +201,7 @@ impl Default for PlayerConfiguration {
             potion_key: KeyKind::A,
             use_potion_below_percent: None,
             update_health_millis: None,
+            vip_booster_key: KeyKind::A,
         }
     }
 }
@@ -318,6 +325,9 @@ pub struct PlayerContext {
     velocity_samples: Array<(Point, u64), VELOCITY_SAMPLES>,
     /// Approximated player velocity.
     pub(super) velocity: (f32, f32),
+
+    /// The number of times [`Player::UsingBooster`] for VIP Booster failed.
+    vip_booster_failed_count: u32,
 }
 
 impl PlayerContext {
@@ -510,6 +520,26 @@ impl PlayerContext {
         if include_transitioned_count {
             self.unstuck_transitioned_count = 0;
         }
+    }
+
+    /// Whether fail count for using VIP Booster has reached limit.
+    #[inline]
+    pub fn is_vip_booster_fail_count_limit_reached(&self) -> bool {
+        self.vip_booster_failed_count >= MAX_VIP_BOOSTER_FAILED_COUNT
+    }
+
+    /// Increments the VIP Booster usage fail count.
+    #[inline]
+    pub(super) fn track_vip_booster_fail_count(&mut self) {
+        if self.vip_booster_failed_count < MAX_VIP_BOOSTER_FAILED_COUNT {
+            self.vip_booster_failed_count += 1;
+        }
+    }
+
+    /// Resets VIP Booster usage fail count.
+    #[inline]
+    pub(super) fn clear_vip_booster_fail_count(&mut self) {
+        self.vip_booster_failed_count = 0;
     }
 
     /// Increments the rune validation fail count and sets [`PlayerState::rune_cash_shop`]
@@ -1312,7 +1342,7 @@ impl PlayerContext {
         if is_dead {
             let update =
                 update_detection_task(resources, 1000, &mut self.is_dead_button_task, |detector| {
-                    detector.detect_tomb_ok_button()
+                    detector.detect_popup_ok_new_button()
                 });
             match update {
                 Update::Ok(bbox) => {
@@ -1531,7 +1561,7 @@ mod tests {
         idle.platforms = Array::from_iter(find_neighbors(&platforms, 25, 7, 41));
         idle.bbox = bbox;
 
-        let rng = Rng::new(SEED);
+        let rng = Rng::new(SEED, 1337);
         let mut resources = Resources::new(None, None);
         resources.rng = rng;
 
@@ -1555,7 +1585,7 @@ mod tests {
         let mut idle = MinimapIdle::default();
         idle.bbox = bbox;
 
-        let rng = Rng::new(SEED);
+        let rng = Rng::new(SEED, 1337);
         let mut resources = Resources::new(None, None);
         resources.rng = rng;
 

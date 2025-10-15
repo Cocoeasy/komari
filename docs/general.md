@@ -1,10 +1,12 @@
+# This content is AI-generated with provision
+
 - [Download](#download)
 - [Concepts](#concepts)
   - [Map](#map)
   - [Movement](#movement)
   - [Characters](#characters)
   - [Action](#action)
-      - [Normal and priority](#normal-and-priority)
+      - [Normal and Priority](#normal-and-priority)
       - [Configuration](#configuration)
   - [Linked Key & Linked Action](#linked-key--linked-action)
   - [Rotation Modes](#rotation-modes)
@@ -12,13 +14,13 @@
     - [Ping Pong](#ping-pong)
   - [Platforms Pathing](#platforms-pathing)
   - [Navigation](#navigation)
-  - [Run/stop Cycle](#runstop-cycle)
+  - [Run/Stop Cycle](#runstop-cycle)
   - [Capture Modes](#capture-modes)
   - [Familiars Swapping](#familiars-swapping)
   - [Panic Mode](#panic-mode)
   - [Elite Boss Spawns Behavior](#elite-boss-spawns-behavior)
-  - [Control And Notifications](#control-and-notifications)
-- [Video guides](#video-guides)
+  - [Control and Notifications](#control-and-notifications)
+- [Video Guides](#video-guides)
 - [Showcase](#showcase)
   - [Rotation](#rotation)
   - [Auto Mobbing & Platforms Pathing](#auto-mobbing--platforms-pathing)
@@ -26,359 +28,419 @@
 
 ## Download
 
-- Head to the [Github Release](https://github.com/sasanquaa/komari/releases)
-- Download `app-release-gpu.zip` or `app-release-cpu.zip` and extract it
-- Run the exe file
+1. Go to the [GitHub Release Page](https://github.com/sasanquaa/komari/releases)
+2. Download `app-release-gpu.zip` or `app-release-cpu.zip`
+3. Extract the archive
+4. Run the `.exe` file
 
 ## Concepts
 
-#### Map
+### Map
 
-- Map is automatically detected but must be created manually by providing a name
-- The created map is saved and can be selected again later
-- Any actions preset created in the detected map is saved to that map only
+- The map is detected automatically but must be created manually by providing a name.
+- The created map is saved and can be selected later.
+- Any action presets created in the detected map are saved to that map only.
 
-The arcs are only for visual and do not represent the actual moving path. However, it does represent
-the order of one action to another as indicated by the number.
+> **Note:**  
+> The arcs shown are for visualization purposes only. They do **not** represent the actual movement path. However, they indicate the sequence of actions, as shown by their numbering.
 
-TODO: Update image
+![Map](https://github.com/sasanquaa/komari/blob/master/.github/images/map.png?raw=true)
 
-#### Movement
-Bot default movement without platforms pathing is really simple:
-1. Moves horizontally first to match `x` of a destination
-2. Then performs fall/up jump/grapple to match `y` of a destination
+---
 
-If `x` is close enough to a destination (`close enough` currently means distance than `25`, subject
-to change), the bot will walk instead of double jump.
+### Movement
 
-#### Characters
-- `Characters` tab is used to change key bindings, set up buffs,...
-- Can be created separately for each character
-- Character is saved globally and not affected by the detected map
-- There are four sections:
-  - `Key bindings`: For general in-game key bindings
-  - `Buffs`: For automatic buffs configuration
-  - `Fixed actions`: Actions that are shared across all maps, useful for buffs or one-time skills
-  - `Others`: Other game-related configurations for the character
-    - `Potion Mode`: Configures the potion mode
-      - `EveryMillis`: Uses potion every `x` milliseconds
-      - `Percentage`: Uses potion when player's health is below a percentage
-    - `Disable teleport on fall`: Whether to disable teleport on fall for mage class
-    - `Disable walking`: Whether to disable the `Adjusting` state (e.g. making the bot to only double jumps when moving horizontally)
+Default bot movement (without platform pathing) follows these steps:
 
-From v0.12, `Rope lift` skill can now be disabled. If not provided, the bot will just try to up jump.
+1. Moves horizontally to match the destination’s `x` coordinate.
+2. Then performs a fall, up-jump, or grapple to match the destination’s `y` coordinate.
 
-For supported buffs in the configuration, the bot relies on detecting buffs on the top-right corner.
+If the bot is close enough to the destination (within `25` units, subject to change), it will **walk** instead of performing a double jump.
+
+---
+
+### Characters
+
+- The `Characters` tab is used to change key bindings, set up buffs, and more.
+- Character profiles can be created separately for each character.
+- Characters are saved globally and are not tied to a specific map.
+
+#### Character Sections
+
+1. `Key Bindings` – For general in-game key mappings.
+2. `Feed pet` – Configures feed pet.
+3. `Use potion` – Configures potion usage.
+4. `Use booster` – Configures VIP/HEXA booster usage.
+5. `Movement` – Movement settings.
+6. `Buffs` – For automatic buff setup.
+7. `Fixed Actions` – Shared across all maps (useful for buffs or one-time skills).
+8. `Others` – Miscellaneous character settings.
+
+##### Potion Mode
+
+There are two modes available for configuring potion usage:
+
+- `EveryMillis` – Uses a potion every `x` milliseconds.  
+- `Percentage` – Uses a potion when HP drops below a certain percentage.
+
+##### Movement
+
+- `Disable teleport on fall` – Disables teleport after falling (useful for mage classes).
+- `Disable double jumping` – Disables the `DoubleJumping` state (e.g., makes the bot only walk).  
+  - Works only if the action does not have `Use with = DoubleJump`.
+- `Disable walking` – Disables the `Adjusting` state (forces horizontal movement by double jumps only).  
+  - Works only if the action does not have `Adjust` ticked.
+
+From **v0.12**, the `Rope Lift` skill can now be disabled. If not provided, the bot will attempt to up-jump instead.
+
+> **Note:**  
+> For supported buffs, the bot relies on detecting buffs in the top-right corner of the screen.
 
 ![Buffs](https://github.com/sasanquaa/komari/blob/master/.github/images/buffs.png?raw=true)
 
-(From v0.21) 
-If multiple buffs are enabled that maybe conflicting with one another (e.g. x2/x3 exp coupons, small wap/big wap, ...),
-the bot will try to stop buffing if one or the other is already buffed. This is currently just prevention and does not
-prioritize which buff to use first (e.g. uses x2 exp coupon first and then x3 exp coupon).
+From **v0.21**, if multiple conflicting buffs (e.g., x2/x3 EXP coupons, small/large WAP) are enabled,  
+the bot will prevent buffing one if it detects the other is active. Currently, it does **not** prioritize which buff to use first.
 
-#### Action
-There are two types of action:
-- Move - Moves to a location on the map
-- Key - Uses a key with or without location
+---
 
-##### Normal And Priority
+### Action
 
-An action is categorized into normal and priority actions. A priority action can override a normal
-action and force the player to perform the former. The normal action is not completely overriden
-and is only delayed until the priority action is complete.
+Can be configured under `Actions` tab. Action is the bot main mechanism for using skills, solving rune, buffing, etc.
 
-Currently, priority actions consist of `Erda Shower off cooldown` and `Every milliseconds` actions.
+There are two types of actions:
 
-For `Erda Shower off cooldown` action to work, the skill Erda Shower must be assigned to
-the quick slots, with Action Customization toggled on and **visible** on screen. The skill
-should also be casted when using this type of action or the actions will be re-run.
+- `Move` – Moves to a specific location on the map.  
+- `Key` – Uses a key (optionally with a position).
+
+#### Normal and Priority
+
+Actions are categorized as either **normal** or **priority**:
+
+- **Priority action** overrides normal action temporarily.  
+- Normal action resumes once the priority action is complete.
+
+Current priority actions include:
+- `Erda Shower off cooldown`
+- `Every milliseconds`
+
+> **For `Erda Shower off cooldown` to work:**  
+> - The Erda Shower skill must be assigned to a quick slot.  
+> - Action customization must be toggled on and visible.  
+> - The skill must actually cast when triggered, or the bot will rerun the actions chain.
 
 ![Erda Shower](https://github.com/sasanquaa/komari/blob/master/.github/images/erda.png?raw=true)
 
-##### Configuration
+#### Configuration
 
-Move action configurations:
-- `Adjust`: 
-  - Whether the actual position should be as close as possible to the specified position 
-  - Enabling this option will cause `Disable walking` in the `Characters` tab to be ignored and make the character walks
-- `X`: The horizontal x position to move to
-- `X random range`: Random x between `[x - range, x + range]` to move to
-- `Y`: The vertical y position to move to
-- `Wait after move`: The milliseconds to wait after moving (e.g. for looting)
-- `Linked action`:
-  - See [linked action](#linked-key--linked-action)
-  - Can only be enabled if it is not the first action or the action list is non-empty
+For `Move` action:
+- `Adjust` – Ensures the actual position matches the target closely.  
+  - When enabled, it overrides the `Disable walking` option and allows walking.  
+- `X` – Horizontal coordinate to move to.  
+- `X random range` – Adds randomization: `[x - range, x + range]`.  
+- `Y` – Vertical coordinate to move to.  
+- `Wait after move` – Delay (in milliseconds) after moving (e.g., for looting).  
+- `Linked action` – See [Linked Key & Linked Action](#linked-key--linked-action).  
+  - Can only be used if it is not the first action or the list is non-empty.
 
-Key action configurations:
-- `Positioned`: Whether this key action has a position
-- `X`, `X random range`, `Y`, `Adjust`, `Linked action`: Same as move action
-- `Key`: The key to use
-- `Use count`: Number of times to use the key
-- `Has link key`: Optionally enable link key (useful for [combo classes](#linked-key--linked-action))
-- `Queue to front`:
-  - Applicable only to priority actions
-  - When set, this action can override other non-`Queue to front` priority action
-  - The overriden priority action is not lost but delayed like normal action
-  - Useful for action such as `press attack after x milliseconds even while moving`
-  - Cannot override linked action
-- `Use direction`: The direction to use the key
-- `Use with`:
-  - `Any` - Performs as the bot sees appropriate
-  - `Stationary` - Performs an action only when standing on ground (for buffs)
-  - `DoubleJump` - Performs an action with double jump
-- `Wait before`/`Wait after`:
-  - Wait for the specified amount of millseconds after/before using the key
-  - Waiting is applied on each repeat of `Use count`
-- `Wait random range`: Applies randomization to the delay in the range `delay - range` to `delay + range`
+For `Key` action:
+- `Positioned` – Determines if the key action is position-dependent.  
+- `X / X random range / Y / Adjust / Linked action` – Same as Move Action.  
+- `Key` – The key to press.  
+- `Use count` – Number of times to use the key.  
+- `Has link key` – Enables link key (useful for combo classes).  
+- `Queue to front` – For priority actions only.  
+  - Allows this action to override non-queue-to-front priority actions.  
+  - The overridden action is delayed, not lost.  
+  - Useful for `press attack after X ms even while moving`.  
+  - Cannot override linked actions.  
+- `Use direction` – Sets the direction for the action.  
+- `Use with` - Uses the key with specific player's state.  
+  - `Any` – Performs as appropriate.  
+  - `Stationary` – Only when standing (for buffs).  
+  - `DoubleJump` – With double jump.  
+- `Wait before / Wait after` – Delay (ms) before/after using the key (applies to each repeat).  
+- `Wait random range` – Adds randomness to the wait time: `[delay - range, delay + range]`.
 
-Actions added in the list below can be reordered by clicking the up/down icons.
+Actions can be reordered using the up/down icons.
 
 ![Actions](https://github.com/sasanquaa/komari/blob/master/.github/images/actions.png?raw=true)
 
-#### Linked Key & Linked Action
-Linked key and linked action are useful for combo-oriented class such as Blaster, Cadena, Ark, Mercedes,...
-Animation cancel timing is specific to each class. As such, the timing is approximated and provided in the configuration, so make sure you select the appropriate one.
+---
 
-For linked key, there are four link types:
-- `Before` - Uses the link key before the actual key (e.g. for Cadena, Chain Arts: Thrash is the link key)
-- `AtTheSame` - Uses the link key at the same time as the actual key (probably only Blaster skating needs this)
-- `After` - Uses the link key after the actual key (e.g. for Blaster, Weaving/Bobbing is the link key)
-- `Along` - Uses the link key along with the actual key while the link key is being held down (e.g. for in-game Combo key)
+### Linked Key & Linked Action
 
-Note that even though `AtTheSame` would send two keys simultaneously, *the link key will be send first*. When the configured
-class is set to Blaster, the performing action has `After` link type and the link key is not `Jump Key`, an extra `Jump Key` will be sent for cancelling Bobbing/Weaving. The same effect can also be achieved through linked action.
+Useful for combo-oriented classes such as Blaster, Cadena, Ark, Mercedes, etc. Animation cancel timings
+depend on the class, which can be configured in `Characters` → `Others` → `Link key timing class`.
 
-As for `Along` link type, the timing is fixed and does not affected by class type.
+#### Link Key Types
 
-Linked action is for linking action(s) into a chain. Linked action can be created by ticking `Linked action` checkbox action below any other action. The first action is the start of the actions chain:
+- `Before` – Uses the link key before the main key (e.g., Cadena’s Chain Arts: Thrash).  
+- `AtTheSame` – Uses both keys simultaneously (e.g., Blaster skating).  
+- `After` – Uses the link key after the main key (e.g., Blaster Weaving/Bobbing).  
+- `Along` – Uses the link key along with the main key while the link key is being held down (e.g., in-game Combo Key).
 
-TODO: Image
+> **Notes:**  
+> - Even for `AtTheSame`, the link key is sent **first**.  
+> - For Blaster, if `After` is set and the link key is not `Jump`, an extra `Jump` will be sent to cancel Bobbing/Weaving.  
+> - Linked key can also be simulated via linked actions.
+> - `Along` type timing is fixed and unaffected by class.
 
-Linked action cannot be overriden by any other type of actions once it has started executing regardless of whether the action is a normal or priority action.
+#### Linked Actions
 
-#### Rotation Modes
-Rotation mode specifies how to run the actions and affects **only** normal actions. It can be changed in the `Rotation` section in the `Actions` tab. There are three modes:
-- `StartToEnd` - Runs actions from start to end in the order added and repeats
-- `StartToEndThenReverse` - Runs actions from start to end in the order added and reverses (end to start)
-- `AutoMobbing` - All added normal actions are ignored and, instead, detects a random mob within bounds to hit
-- `PingPong` - All added normal actions are ignored and, instead, double jumps and uses key until hitting the bound edges
+You can chain actions by enabling `Linked action` on subsequent ones.  
+The first action starts the chain:
 
-For other priority actions:
-- `Every milliseconds` actions run out of order
-- `Erda Shower off cooldown` actions run in the order added same as `StartToEnd`
+![Linked Actions](https://github.com/sasanquaa/komari/blob/master/.github/images/linked_actions.png?raw=true)
 
-##### Auto-mobbing
-Auto-mobbing is feature to hit random mobs detected on screen. It can be enabled by changing rotation mode to `AutoMobbing`. When `AutoMobbing` is used:
-- Setting the bounds to inside the minimap is required so that the bot will not wrongly detect out of bounds mobs
-- The bounds should be the rectangle where you can move around (two edges of the map)
-- While this mode ignores all normal actions, it is still possible to use other priority actions
-- For platforms pathing, see [Platforms Pathing](#platforms-pathing)
-- If platforms are provided:
-  - Use platforms as pathing points for more accurate mob positions and better movement:
-    - If not provided, the bot will try to figure out over time what `y` the player can stand on, which can be slow
-    - Providing platforms help figuring out these `y` immediately
-  - Try to detect "gaps" between platforms to ignore invalid mob positions
-  - Note that it is only encouraged and not neccessary to add platforms when using auto-mobbing but then the bot will rely solely on randomness
+Linked actions appear visually connected with vertical bars. Once a chain begins, it cannot be overridden by any other actions.
 
-(From v0.18.0)
-Auto-mobbing now follows a fixed clockwise order based on the provided bound like the below image. This has improved
-auto-mobbing mob count even in larger maps. Previously, auto-mobbing suffers from too much randomness and unable to move
-around much in larger maps.
+---
+
+### Rotation Modes
+
+Rotation mode defines how **normal actions** are executed (priority actions are unaffected).  
+You can select the mode in `Actions` → `Rotation`.
+
+#### Available Modes
+
+- `StartToEnd` – Runs actions from start to end and repeats.  
+- `StartToEndThenReverse` – Runs from start to end, then reverses order.  
+- `AutoMobbing` – Ignores normal actions; automatically detects and attacks mobs.  
+- `PingPong` – Ignores normal actions; moves and attacks between bounds.
+
+Priority actions (`Every milliseconds` and `Erda Shower off cooldown`) still follow their own logic.
+
+#### Auto-Mobbing
+
+Auto-mobbing targets random mobs detected on screen. To use it, sets the rotation mode to `AutoMobbing` and updates
+the mobbing bound.
+
+For platform-based movement, see [Platforms Pathing](#platforms-pathing). If platforms are added:
+- Uses them to better estimate mob positions.
+- Identifies platform "gaps" to avoid invalid mob locations.
+- Adding platforms is encouraged but not required. Without them, the bot relies more on randomness.
+
+From **v0.18.0**, Auto-mobbing now follows a fixed **clockwise** path, improving mob count on large maps.
 
 How it works:
-1. The bound is divided into four quads
-2. The player will move to each of this quad in a clockwise order
-3. The player will only detect and hit mobs inside each of this quad (outside of this quad is ignored)
-4. If there is no more mob, move to the next quad
+1. The bound is divided into four quadrants.  
+2. The player moves between quadrants clockwise.  
+3. Only mobs in the current quadrant are targeted.  
+4. If no mobs remain, it moves to the next quadrant.
 
-Red arrow's tail indicates current quad and its head indicates the next quad to move to.
+![Auto-mobbing](https://github.com/sasanquaa/komari/blob/master/.github/images/auto_mobbing.png?raw=true)
 
-![Auto-mobbing](https://github.com/sasanquaa/komari/blob/master/.github/images/automobbing.png?raw=true)
+From **v0.21.0**, two new options are added:
+- `Auto mobbing uses key when pathing` – Uses mobbing key while moving between quadrants and mobs are detected ahead.  
+- `Detect mobs when pathing every` – Sets mobs detection interval when moving between quadrants.
 
-(From v0.21.0)
-Added two new options `Auto mobbing uses key when pathing` and `Detect mobs when pathing every`:
-- Only works when player is pathing from one quad to another (e.g. when detection fails to find mob in the current quad so it moves to the next)
-- Uses mobbing key if the bot detects mobs facing in the same direction that the player is moving
-- Useful for larger maps where quads are far apart
-- Detects mobs interval when pathing can be configured
+#### Ping Pong
 
-##### Ping Pong
-Added in v0.12:
-- All added normal actions are ignored but still possible to use other priority actions similar to `AutoMobbing`
-- Player double jumps and uses key until hitting the bound edges, then reverses in the other direction
-- Forces the player to always try and stay inside the bound
-- If already inside bound:
-  - Has a chance to grapple/up jump if below bound mid `y`
-  - Has a chance to fall down if above bound mid `y`
-  - Within the distance of `9` from the bound mid `y`, randomization (grapple/up jump/fall down) will not happen
-- Simpler than `AutoMobbing`, can achieve higher mob count and useful for class that mostly just double jumps and spams attack (e.g. Night Walker)
+Introduced in **v0.12**.
 
-#### Platforms Pathing
-Platforms pathing is currently only supported for auto-obbing and rune solving. This feature exists to help
-pathing around platforms with or without `Rope Lift` skill. To use this feature, add all the map's platforms starting
-from the ground level.
+Ping pong makes the player double jumps and attacks inside the bound, reversing direction upon reaching the bound edge. To use it, sets the rotation mode to `PingPong` and updates the mobbing bound.
 
-When adding platforms, hot keys can be used to add platforms more quickly. And it is encouraged to add platforms when
-used for auto-mobbing as it can help auto-mobbing as documented in [Auto-mobbing](#auto-mobbing).
+This mode will try to force the player to always be within the bound. If player is already inside the bounds:
+- May grapple or up-jump when below bound's `y` midpoint.  
+- May fall when above bound's `y` midpoint.  
+- Within `9` units of bound's `y` midpoint, there will be no random movement.
 
-#### Navigation
-(Added in v0.19)
+Simpler than Auto-mobbing; suitable for classes that primarily jump and spam attacks (e.g., Night Walker).
 
-Navigation is a feature to help the player moves to a designated map automatically. The current system only supports
-navigating through map(s) using portal(s). There are two main concepts:
-- Paths group: 
-  - Represents a collection of paths
-  - Helps organizing related paths into one groups (e.g. all paths inside Hotel Arcus)
-- Path:
-  - Represents a snapshot of a minimap that contains minimap and its name images
-  - Contains point(s) (e.g. portal coordinates) that will transition to another path upon moving
-- Point:
-  - Represents a transition to a different path
+---
 
-Navigation paths can be created following this procedure:
-1. Open `Navigation` tab
-2. Note down a list of maps you want to navigate (e.g. Esfera's Base Camp -> Esfera's Mirror-touched Sea 3)
-3. Create a paths group with a name (e.g. Esfera)
-4. Go to each map and ensure the minimap is currently detectable
-5. Click `Add path`:
-    - Automatically capture the current minimap and its name images
-    - Used for matching against other paths to know the player current location
-6. Go to a portal inside the map and click `Add point`:
-    - Automatically record the portal coordinate to be used for navigating
-    - Can optionally select the next paths group and its index (e.g. Path 1, Path 2, ...) this point will transition to
-7. Repeat from 3. until all paths are added
-8. Select a created map and attach a path to it through `Attached paths group` and `Attached path`
+### Platforms Pathing
 
-After following the above procedure, when clicking `Start`, the bot will try to navigate to the attached path first before 
-rotating the actual actions. Useful for:
-- Bot [run/stop Cycle](#runstop-cycle) that will stop, go town for a specified duration and start again
-- Navigate back to the original map if accidental map changing occurs
+Supported for Auto-mobbing and Rune solving. This feature helps pathing across platforms, with
+or without the `Rope Lift` skill. To use, add platforms for the selected map starting from ground level.
+Use hotkeys to add them quickly.
 
-This system is currently experimental and subject to changes. Current limitations include:
-- Cannot do interaction-based navigation
-- Cannot navigate to portal coordinates that make the bot goes into unstucking state
+> **Note**:
+> Adding platforms improves Auto-mobbing movement.
+
+---
+
+### Navigation
+
+Introduced in **v0.19**.
+
+Enables the bot to navigate automatically between maps using portals.
+
+#### Core Concepts
+
+- `Paths group` – A collection of related paths (e.g., Hotel Arcus).  
+- `Path` – A minimap snapshot containing its name, minimap images and coordinates (e.g., portals).  
+- `Point` – A transition marker to another path.
+
+#### Setup Steps
+
+1. Opens the `Navigation` tab.  
+2. Notes down the desired route (e.g., Esfera Base Camp → Esfera Mirror-touched Sea 3).  
+3. Creates a `Paths group` (e.g., Esfera).  
+4. Goes to each map and ensures the minimap is detected.  
+5. Clicks `Add path` – captures the minimap and name images for matching.  
+6. Clicks `Add point` – records portal coordinates and links to next path.  
+7. Repeats from 3. until all paths are added.  
+8. Attaches a created path to the current map under `Navigation` → `Selected map` → `Attached paths group` and `Attached path`.
+
+When started, the bot will navigate to the attached path before rotating actions.  
+Useful for:
+- Run/stop cycles (e.g., returns to town on stop cycle and navigates back).  
+- Navigates back to original map if the bot changes map accidentally.
+
+#### Limitations
+
+- No interaction-based navigation yet.  
+- Cannot handle portals leading to `Unstucking` state positions.
 
 ![Navigation](https://github.com/sasanquaa/komari/blob/master/.github/images/navigation.png?raw=true)
 
-(From v0.21)
-Added option `Use grayscale for map` so that the bot will try to use grayscale to match a minimap instead of color. This maybe 
-useful if the bot frequently fails trying to find the player current location using colored minimap.
+From **v0.21**, added `Use grayscale for map` option for better minimap matching if color-based detection fails.
 
-#### Run/stop Cycle
-(Added in v0.19)
+---
 
-Added in the `Settings` tab under `Run/stop cycle` section:
-- `None`: Does not cycle and run or stop forever
-- `Once`: Runs for the specified `Run duration` and then stops completely by going to town
-- `Repeat`: Runs for the specified `Run duration`, then stops for the specified `Stop duration` by going to town and repeats afterwards
+### Run/Stop Cycle
 
-Using this feature requires:
-- Key binding for `To town` is set
-- Navigation paths for the selected map are available if `Repeat` is chosen
+Introduced in **v0.19**.
 
-If enabled, the `Suspend` button below the map will be enabled and can be used for temporarily stopping
-without resetting the duration.
+Found under `Settings` → `Run/stop cycle`:
 
-#### Capture Modes
-`Capture` section in the `Settings` tab can be used to change how the bot captures game images. There are three capture modes, the first two are similar to what you see in OBS:
-- `BitBlt` - The default capture mode that works for GMS
-  - GMS Stargazer update made this mode stopped working on some machines and should be changed to the below method
-- `Windows 10 (1903 and up)` - The alternative capture mode for Windows 10 that works for TMS/MSEA
-- `BitBltArea` - Captures a fixed area on the screen
-  - This capture mode is useful if you are running the game inside something else or want to use fixed capture area (e.g. a VM, capture card (?) or Sunshine/Moonlight)
-  - The capture area can stay behind the game but it cannot be minimized
-  - **When the game resizes (e.g. going to cash shop), the capture area must still contain the game**
-  - **When using this capture mode, key inputs will also be affected:**
-    - **Make sure the window on top of the capture area is focused by clicking it for key inputs to work**
-    - For example, if you have Notepad on top of the game and focused, it will send input to the Notepad instead of the game
+- `None` – Runs or stops indefinately (default behavior).  
+- `Once` – Runs for a specified duration, then stops and returns to town.  
+- `Repeat` – Alternates between running and resting in town.
 
-You can also directly select which window to capture via `Handle`.
+**For this to work:**
+- Key binding for `To town` is set.  
+- If `Repeat` mode is used, navigation paths must be setup.
 
-#### Familiars Swapping
-(From v0.13)
-`Familiars` section in the `Settings` tab is a feature to help periodically checking currently equipped familiar levels and swapping them out with new familiars if the any of the equipped ones level is maxed:
-- `Swap check milliseconds`: Check for swapping every `X` milliseconds
-- `Swappable slots`:
-  - `All`: All slots can be swapped
-  - `Last`: Only last slot can be swapped
-  - `SecondAndLast`: Only second and last slots can be swapped
-- `Can swap rare familiars`: Familiar with rare rarity will be included when swapping
-- `Can swap epic familiars`: Familiar with epic rarity will be included when swapping
+The `Suspend` button allows pausing temporarily without resetting timer.
 
-Familiars swapping supports scrolling the familiar cards list to find more selectable cards. But for best experience, the cards list should contain selectable cards immediately without scrolling.
+---
 
-After swapping, it will save the setup and cause the familiar buff to turn off. Therefore, the familiar buff in the `Buffs` tab should also be turned on.
+### Capture Modes
 
-**This feature currently assumes all familiar slots have already been expanded. Also make sure your key binding to open the familiar menu is set when using this feature.**
+Found in `Settings` → `Capture` → `Mode`.
 
-#### Panic Mode
-(From v0.14)
-Panic mode can be enabled in the `Settings` tab. Once enabled, if another player (friend, guild, stranger) appears in the same map for 15 seconds, it will enter `Panicking` state and cycle through channels until a channel without any other player is found.
+Defines how the bot captures the game image. Three modes available:
 
-(From v0.18)
-If `Stop actions on fail or map changed` is enabled, the bot will stop upon failure and go to town. 
+1. `BitBlt`.  
+2. `Windows 10 (1903 and up)` - Default mode.  
+3. `BitBltArea` – Captures a fixed region.  
+   - Useful for VMs, capture cards, or Sunshine/Moonlight setups.  
+   - The capture area must always include the game window.  
+   - The capture area can stay behind the game but cannot be minimized.  
+   - **The game must always be contained inside the capture area even when the game resizes.**  
+   - **Key inputs are sent to the focused window above the capture area**.
 
-Requires setting up key bindings for `To town` and `Change channel` first.
+You can also directly select a capture window via `Handle`.
 
-#### Elite Boss Spawns Behavior
-(From v0.17, previously known as `Change Channel On Elite Boss`)
+---
 
-Added `Elite boss spawns behavior` in `Characters` tab with two behavior types:
-- `None`: Does nothing when elite boss spawns
-- `CycleChannel`: Queues a channel change (`Panicking` state) action when an elite boss appears
-- `UseKey`: Uses a key when elite boss appears (e.g. useful for origin skill)
+### Familiars Swapping
 
-#### Control And Notifications
-(Added in v0.20 for Discord bot)
-The bot uses Discord's webhook and bot/application features to enable notifications and remote monitoring
-through slash commands. Follows Discord's official guide to create a webhook URL or a bot/application access token
-and provides it to Komari's bot in the `Settings` tab. Note that if only notifications are used, providing only the webhook URL is sufficient.
+Introduced in **v0.13**.
 
-For notifications, the following types are available with their names quite self-explainatory:
-- `Rune spawns`
-- `Elite boss spawns`
-- `Player dies`
-- `Guildie appears`
-- `Stranger appears`
-- `Friend appears`
-- `Detection fails or map changes`
+Located under `Settings` → `Familiars`. Automatically checks equipped familiar levels and swaps them when maxed:
 
-If `Discord ping user ID` is provided, the notification will also ping the user with the provided user ID.
+- `Swap check every` – Interval in milliseconds between checks.  
+- `Swappable slots`.  
+  - `All` – All slots.  
+  - `Last` – Only last slot.  
+  - `SecondAndLast` – Second and last slots only.  
+- `Can swap rare familiars` – Allows rare ones to be swapped.  
+- `Can swap epic familiars` – Allows epic ones to be swapped.
 
-For Discord bot, the following commands are available:
-- `/status`: The bot current status, run duration and image
-- `/start`: Starts the bot
-- `/stop`: Stops the bot
-  - `go-to-town`: Whether to go to town when stopping
-- `/suspend`: Stops the bot temporarily (stops completely if run/stop cycle is not used )
-- `/start-stream`: Streams the bot's status at regular interval for up to 15 minutes
-- `/stop-stream`: Stops the started stream
-- `/chat`: Performs an in-game chat (only supports partial ASCII characters and external chat disabled)
-- `/action`: Performs a specified action
-  - `kind`: The kind of action
-  - `count`: The number of times to do the action
+Supports scrolling through familiar cards.  
+For best results, keep available cards visible without scrolling.
 
-The Discord bot is current experimental and subject to change.
+> **Notes:**  
+> - After swapping, familiar buff will be turned off. To enable familiar buff again, enables it in the `Buffs` tab.  
+> - All familiar slots must be unlocked, and the familiar menu key binding must be set.
 
-## Video guides
-From v0.16, due to UI change, the first two videos are now outdated but the general concepts still apply.
+---
 
-1. [Basic operations](https://youtu.be/8X2CKS7bnHY?si=3yPmVPaMsFEyDD8c)
-2. [Auto-mobbing and platforms pathing](https://youtu.be/8r2duEz6278?si=HTHb8WXh6L7ulCoE)
-3. Rotation modes, linked key and linked actions - TODO
-    - [Clockwise rotation example](https://youtu.be/-glx3b0jGEY?si=nuEDmIQTuiz3LtIq) 
+### Panic Mode
 
-## Showcase (These showcases are from v0.1)
-#### Rotation
+Introduced in **v0.14**.
+
+Located under `Settings` → `Panic mode`.
+
+If another player (friend, guildmate, or stranger) appears on the same map for 15 seconds,  
+the bot enters `Panicking` state and cycles through channels until a map without any other player is found. 
+Requires `Change channel` key binding.
+
+From **v0.18**, if `Stop actions on fail or map change` is also enabled, the bot stops and goes to town upon failure. 
+Requires `To town` key binding.
+
+---
+
+### Elite Boss Spawns Behavior
+
+Introduced in **v0.17**, previously known as `Change channel on Elite Boss`.
+
+Found under `Characters` → `Elite Boss spawns behavior`.
+
+Available behaviors:
+- `None` – No action.  
+- `CycleChannel` – Changes channel when an Elite Boss appears.  
+- `UseKey` – Triggers a key (useful for origin skills).
+
+---
+
+### Control and Notifications
+
+Uses Discord webhook or bot token for notifications and remote control.
+
+#### Notifications
+
+Provide a **webhook URL** (for notifications only) or a **bot token** (for full control).
+
+Available notification types:
+- Rune Spawns  
+- Elite Boss Spawns  
+- Player Dies  
+- Guildie Appears  
+- Stranger Appears  
+- Friend Appears  
+- Detection Fails / Map Changes
+
+If `Discord ping user ID` is set, the bot pings that user in the notification message.
+
+#### Discord Commands
+
+Introduced in **v0.20**.
+
+- `/status` – Shows current status, runtime, and image.  
+- `/start` – Starts the bot.  
+- `/stop` – Stops the bot (optionally goes to town).  
+- `/suspend` – Pauses temporarily (or fully if no cycle is active).  
+- `/start-stream` – Streams status periodically (up to 15 min).  
+- `/stop-stream` – Stops streaming.  
+- `/chat` – Sends in-game chat (ASCII only).  
+- `/action` – Performs a specified action (with kind and count).
+
+> The Discord bot is experimental and may change.
+
+## Video Guides
+
+From v0.16 — the first two videos are outdated but still useful for basics.
+
+1. [Basic Operations](https://youtu.be/8X2CKS7bnHY?si=3yPmVPaMsFEyDD8c)  
+2. [Auto-Mobbing and Platforms Pathing](https://youtu.be/8r2duEz6278?si=HTHb8WXh6L7ulCoE)  
+3. Rotation Modes, Linked Key & Linked Actions (TODO)  
+   - [Clockwise Rotation Example](https://youtu.be/-glx3b0jGEY?si=nuEDmIQTuiz3LtIq)
+
+## Showcase (Examples from v0.1)
+
+### Rotation
 https://github.com/user-attachments/assets/3c66dcb9-7196-4245-a7ea-4253f214bba6
 
 (This Blaster rotation was before Link Key & Link Action were added)
 
 https://github.com/user-attachments/assets/463b9844-0950-4371-9644-14fad5e1fab9
 
-#### Auto Mobbing & Platforms Pathing
+### Auto-Mobbing & Platforms Pathing
 https://github.com/user-attachments/assets/3f087f83-f956-4ee1-84b0-1a31286413ef
 
-#### Rune Solving
+### Rune Solving
 https://github.com/user-attachments/assets/e9ebfc60-42bc-49ef-a367-3c20a1cd00e0

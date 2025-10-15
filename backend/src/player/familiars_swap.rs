@@ -609,7 +609,7 @@ fn update_saving(resources: &Resources, swapping: &mut FamiliarsSwapping) {
         Lifecycle::Updated(timeout) => {
             match timeout.current {
                 PRESS_OK_AT => {
-                    if let Ok(button) = resources.detector().detect_esc_confirm_button() {
+                    if let Ok(button) = resources.detector().detect_popup_confirm_button() {
                         let (x, y) = bbox_click_point(button);
                         resources.input.send_mouse(x, y, MouseKind::Click);
                     }
@@ -944,7 +944,7 @@ mod tests {
 
         let mut detector = MockDetector::default();
         detector
-            .expect_detect_esc_confirm_button()
+            .expect_detect_popup_confirm_button()
             .once()
             .returning(|| Ok(Default::default()));
 

@@ -473,7 +473,12 @@ fn update_from_action(player: &mut PlayerEntity, moving: Moving) {
 
         Some(PlayerAction::PingPong(_)) => transition_from_action!(player, Player::Idle),
 
-        Some(PlayerAction::Chat(_) | PlayerAction::Panic(_) | PlayerAction::FamiliarsSwap(_)) => {
+        Some(
+            PlayerAction::Chat(_)
+            | PlayerAction::Panic(_)
+            | PlayerAction::FamiliarsSwap(_)
+            | PlayerAction::UseBooster(_),
+        ) => {
             panic!("unhandled action {action:?}")
         }
 

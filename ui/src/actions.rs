@@ -637,7 +637,7 @@ fn SectionPlatforms(
 #[component]
 fn SectionLegends() -> Element {
     rsx! {
-        Section { name: "Action Legends", class: "paragraph-xs",
+        Section { name: "Action legends", class: "paragraph-xs",
             p { "⟳ - Repeat" }
             p { "⏱︎  - Wait" }
             p { "ㄨ - No position" }

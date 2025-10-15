@@ -176,7 +176,7 @@ fn update_going_to_town(resources: &Resources, panicking: &mut Panicking, key: K
         }
 
         Lifecycle::Ended => {
-            let has_confirm_button = resources.detector().detect_esc_confirm_button().is_ok();
+            let has_confirm_button = resources.detector().detect_popup_confirm_button().is_ok();
             if has_confirm_button {
                 resources.input.send_key(KeyKind::Enter);
             }
@@ -361,7 +361,7 @@ mod tests {
         keys.expect_send_key().once().with(eq(KeyKind::Enter));
         let mut detector = MockDetector::default();
         detector
-            .expect_detect_esc_confirm_button()
+            .expect_detect_popup_confirm_button()
             .returning(|| Ok(Rect::default()));
         let resources = Resources::new(Some(keys), Some(detector));
         let mut panicking = Panicking::new(PanicTo::Town);
@@ -383,7 +383,7 @@ mod tests {
     fn update_going_to_town_ended_retry() {
         let mut detector = MockDetector::default();
         detector
-            .expect_detect_esc_confirm_button()
+            .expect_detect_popup_confirm_button()
             .returning(|| Err(anyhow!("button not found")));
         let resources = Resources::new(None, Some(detector));
         let mut panicking = Panicking::new(PanicTo::Town);

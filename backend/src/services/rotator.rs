@@ -87,6 +87,9 @@ impl RotatorService for DefaultRotatorService {
         let elite_boss_behavior_key = character
             .map(|character| character.elite_boss_behavior_key)
             .unwrap_or_default();
+        let enable_using_vip_booster = character
+            .map(|character| character.vip_booster_key.enabled)
+            .unwrap_or_default();
         let args = RotatorBuildArgs {
             mode,
             actions: &self.actions,
@@ -101,6 +104,7 @@ impl RotatorService for DefaultRotatorService {
             enable_rune_solving: settings.enable_rune_solving,
             enable_familiars_swapping: settings.familiars.enable_familiars_swapping,
             enable_reset_normal_actions_on_erda: reset_normal_actions_on_erda,
+            enable_using_vip_booster,
         };
 
         rotator.build_actions(args);
@@ -351,8 +355,10 @@ mod tests {
             .once()
             .return_const(());
 
-        let mut service = DefaultRotatorService::default();
-        service.buffs = buffs;
+        let service = DefaultRotatorService {
+            buffs,
+            ..Default::default()
+        };
         service.apply(&mut rotator, None, None, &Settings::default());
     }
 

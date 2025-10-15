@@ -2,7 +2,10 @@ use std::{
     cell::RefCell,
     env,
     rc::Rc,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -16,7 +19,7 @@ use crate::ecs::Debug;
 use crate::{
     bridge::{Capture, DefaultCapture, DefaultInput, InputMethod},
     buff::{self, Buff, BuffContext, BuffEntity, BuffKind},
-    database::{query_seeds, query_settings},
+    database::{query_and_upsert_seeds, query_or_upsert_localization, query_settings},
     detect::DefaultDetector,
     ecs::{Resources, World, WorldEvent},
     mat::OwnedMat,
@@ -72,13 +75,18 @@ pub fn init() {
 
 fn systems_loop() {
     let settings = Rc::new(RefCell::new(query_settings()));
-    let seeds = query_seeds(); // Fixed, unchanged
-    let rng = Rng::new(seeds.seed); // Create one for Context
+    let localization = Rc::new(RefCell::new(Arc::new(query_or_upsert_localization())));
+    let seeds = query_and_upsert_seeds();
+    let rng = Rng::new(seeds.rng_seed, seeds.perlin_seed);
     let (event_tx, event_rx) = channel::<WorldEvent>(5);
 
-    let mut service = DefaultService::new(settings.clone(), event_tx.subscribe());
+    let mut service =
+        DefaultService::new(settings.clone(), localization.clone(), event_tx.subscribe());
     let window = service.selected_window();
-    let mut input = DefaultInput::new(InputMethod::Default(window, InputKind::Focused), seeds);
+    let mut input = DefaultInput::new(
+        InputMethod::Default(window, InputKind::Focused),
+        rng.clone(),
+    );
     let mut capture = DefaultCapture::new(window);
     service.update_input_and_capture(&mut input, &mut capture);
 
@@ -135,7 +143,7 @@ fn systems_loop() {
         let detector = capture
             .grab()
             .map(OwnedMat::new_from_frame)
-            .map(DefaultDetector::new);
+            .map(|mat| DefaultDetector::new(mat, localization.borrow().clone()));
         let was_capturing_normally = is_capturing_normally;
         let player_in_cash_shop = matches!(world.player.state, Player::CashShopThenExit(_));
 
